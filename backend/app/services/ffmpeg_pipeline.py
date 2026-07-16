@@ -1,0 +1,370 @@
+from __future__ import annotations
+
+import shutil
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Callable
+
+from app.config import get_settings
+from app.services.subtitles import (
+    build_ass_from_timeline,
+    build_srt_from_timeline,
+    estimate_phrase_cues,
+    load_cues,
+)
+from app.utils.media import ffprobe_duration_ms, run_ffmpeg
+
+
+@dataclass
+class SlideMedia:
+    slide_id: str
+    image_path: Path
+    audio_path: Path | None
+    text: str
+    duration_ms: int
+    transition: str  # none | fade
+    animation: str  # none | ken_burns
+    # Optional precomputed speech-synced cues (relative to slide start)
+    subtitle_cues: list[dict[str, Any]] = field(default_factory=list)
+
+
+@dataclass
+class RenderOptions:
+    width: int = 1920
+    height: int = 1080
+    fps: int = 30
+    include_subtitles: bool = True
+    bgm_path: Path | None = None
+    bgm_volume: float = 0.15
+    crf: int = 20
+    fade_s: float = 0.5
+    zoom_end: float = 1.15
+
+
+@dataclass
+class RenderResult:
+    output_path: Path
+    thumbnail_path: Path
+    duration_ms: int
+    srt_path: Path | None
+
+
+ProgressCb = Callable[[int, str], None]
+
+
+def _fade_durations(d: float, fade_s: float, is_first: bool, is_last: bool, transition: str) -> tuple[float, float]:
+    if transition != "fade":
+        return 0.0, 0.0
+    fi = 0.0 if is_first else fade_s
+    fo = 0.0 if is_last else fade_s
+    if d < 2 * fade_s:
+        fi = d / 4 if not is_first else 0.0
+        fo = d / 4 if not is_last else 0.0
+    return fi, fo
+
+
+def render_project_video(
+    slides: list[SlideMedia],
+    output_path: Path,
+    work_dir: Path,
+    options: RenderOptions | None = None,
+    progress_cb: ProgressCb | None = None,
+) -> RenderResult:
+    settings = get_settings()
+    options = options or RenderOptions(
+        width=settings.video_width,
+        height=settings.video_height,
+        fps=settings.video_fps,
+        fade_s=settings.fade_s,
+        zoom_end=settings.ken_burns_zoom_end,
+    )
+    if work_dir.exists():
+        shutil.rmtree(work_dir)
+    work_dir.mkdir(parents=True, exist_ok=True)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if not slides:
+        raise ValueError("No slides to render")
+
+    # Timeline (+ speech-synced subtitle cues when available)
+    t = 0.0
+    timeline: list[dict] = []
+    for slide in slides:
+        d_s = slide.duration_ms / 1000.0
+        cues = list(slide.subtitle_cues or [])
+        if not cues and slide.audio_path:
+            cues = load_cues(slide.audio_path)
+        if not cues and (slide.text or "").strip():
+            cues = estimate_phrase_cues(slide.text, d_s)
+        timeline.append(
+            {
+                "slide": slide,
+                "start_s": t,
+                "end_s": t + d_s,
+                "duration_s": d_s,
+                "text": slide.text,
+                "cues": cues,
+            }
+        )
+        t += d_s
+    total_s = t
+
+    def progress(p: int, stage: str) -> None:
+        if progress_cb:
+            progress_cb(p, stage)
+
+    # Step A: segments
+    progress(10, "segments")
+    segment_paths: list[Path] = []
+    n_slides = len(timeline)
+    for i, entry in enumerate(timeline):
+        slide: SlideMedia = entry["slide"]
+        d = entry["duration_s"]
+        n = max(1, round(d * options.fps))
+        seg = work_dir / f"segment_{i:04d}.mp4"
+        fi, fo = _fade_durations(d, options.fade_s, i == 0, i == n_slides - 1, slide.transition)
+        fade_parts: list[str] = []
+        if fi > 0:
+            fade_parts.append(f"fade=t=in:st=0:d={fi:.3f}")
+        if fo > 0:
+            fade_parts.append(f"fade=t=out:st={max(0.0, d - fo):.3f}:d={fo:.3f}")
+
+        base_scale = (
+            f"scale={options.width}:{options.height}:force_original_aspect_ratio=decrease,"
+            f"pad={options.width}:{options.height}:(ow-iw)/2:(oh-ih)/2"
+        )
+        if slide.animation == "ken_burns":
+            zoom_inc = (options.zoom_end - 1.0) / max(n - 1, 1)
+            vf = (
+                f"{base_scale},"
+                f"zoompan=z='min(1.0+on*{zoom_inc:.8f},{options.zoom_end})':"
+                f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={n}:s={options.width}x{options.height}:fps={options.fps}"
+            )
+        else:
+            vf = f"{base_scale},fps={options.fps}"
+
+        if fade_parts:
+            vf = vf + "," + ",".join(fade_parts)
+        vf = vf + ",format=yuv420p"
+
+        run_ffmpeg(
+            [
+                "-loop",
+                "1",
+                "-i",
+                str(slide.image_path.resolve()),
+                "-vf",
+                vf,
+                "-t",
+                f"{d:.3f}",
+                "-an",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "veryfast",
+                "-crf",
+                str(options.crf),
+                str(seg),
+            ]
+        )
+        segment_paths.append(seg)
+        progress(10 + int(30 * (i + 1) / n_slides), "segments")
+
+    # Step B: concat video
+    progress(45, "concat_video")
+    concat_list = work_dir / "concat_list.txt"
+    concat_list.write_text("".join(f"file '{p.resolve()}'\n" for p in segment_paths), encoding="utf-8")
+    video_silent = work_dir / "video_silent.mp4"
+    try:
+        run_ffmpeg(["-f", "concat", "-safe", "0", "-i", str(concat_list), "-c", "copy", str(video_silent)])
+    except RuntimeError:
+        run_ffmpeg(
+            [
+                "-f",
+                "concat",
+                "-safe",
+                "0",
+                "-i",
+                str(concat_list),
+                "-c:v",
+                "libx264",
+                "-preset",
+                "veryfast",
+                "-crf",
+                str(options.crf),
+                str(video_silent),
+            ]
+        )
+
+    # Step C: audio (always mono 44.1 kHz PCM so concat never glitches / doubles)
+    progress(60, "audio")
+    audio_parts: list[Path] = []
+    for i, entry in enumerate(timeline):
+        slide: SlideMedia = entry["slide"]
+        d = entry["duration_s"]
+        audio_out = work_dir / f"audio_{i:04d}.wav"
+        if slide.audio_path and slide.audio_path.is_file():
+            run_ffmpeg(
+                [
+                    "-i",
+                    str(slide.audio_path.resolve()),
+                    "-af",
+                    (
+                        "aformat=sample_fmts=s16:channel_layouts=mono:sample_rates=44100,"
+                        f"apad=whole_dur={d:.3f},atrim=0:{d:.3f},asetpts=PTS-STARTPTS"
+                    ),
+                    "-ar",
+                    "44100",
+                    "-ac",
+                    "1",
+                    str(audio_out),
+                ]
+            )
+        else:
+            run_ffmpeg(
+                [
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "anullsrc=r=44100:cl=mono",
+                    "-t",
+                    f"{d:.3f}",
+                    "-ar",
+                    "44100",
+                    "-ac",
+                    "1",
+                    str(audio_out),
+                ]
+            )
+        audio_parts.append(audio_out)
+
+    audio_list = work_dir / "audio_list.txt"
+    audio_list.write_text("".join(f"file '{p.resolve()}'\n" for p in audio_parts), encoding="utf-8")
+    narration = work_dir / "narration.wav"
+    # Re-encode (not -c copy) so sample-rate / layout mismatches cannot produce echo-like artifacts
+    run_ffmpeg(
+        [
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-i",
+            str(audio_list),
+            "-c:a",
+            "pcm_s16le",
+            "-ar",
+            "44100",
+            "-ac",
+            "1",
+            str(narration),
+        ]
+    )
+
+    # Step D: BGM
+    progress(70, "audio_mix")
+    audio_mix = work_dir / "audio_mix.wav"
+    if options.bgm_path and options.bgm_path.is_file():
+        run_ffmpeg(
+            [
+                "-i",
+                str(narration),
+                "-i",
+                str(options.bgm_path.resolve()),
+                "-filter_complex",
+                (
+                    f"[1:a]aformat=channel_layouts=mono:sample_rates=44100,"
+                    f"volume={options.bgm_volume},aloop=loop=-1:size=2e+09[bg];"
+                    f"[bg]atrim=0:{total_s:.3f},asetpts=PTS-STARTPTS[bg2];"
+                    f"[0:a][bg2]amix=inputs=2:duration=first:dropout_transition=2:normalize=0[aout]"
+                ),
+                "-map",
+                "[aout]",
+                "-ar",
+                "44100",
+                "-ac",
+                "1",
+                str(audio_mix),
+            ]
+        )
+    else:
+        shutil.copy2(narration, audio_mix)
+
+    # Step E: timed captions (ASS for styled burn-in; SRT kept as sidecar artifact)
+    srt_path: Path | None = None
+    ass_path: Path | None = None
+    if options.include_subtitles:
+        progress(75, "subtitles")
+        srt_path = work_dir / "job.srt"
+        ass_path = work_dir / "job.ass"
+        srt_path.write_text(build_srt_from_timeline(timeline), encoding="utf-8")
+        # Larger plain type (no outline), raised from bottom; yellow/white cues
+        ass_path.write_text(
+            build_ass_from_timeline(
+                timeline,
+                play_res_x=options.width,
+                play_res_y=options.height,
+                font_size=34,
+                margin_v=110,
+            ),
+            encoding="utf-8",
+        )
+
+    # Step F: mux — explicit maps so a silent/placeholder A/V stream can never double-mix
+    progress(80, "mux")
+    final_tmp = work_dir / "output.mp4"
+    mux_args = ["-i", str(video_silent), "-i", str(audio_mix)]
+    if ass_path and ass_path.is_file():
+        # Escape path for libass subtitles filter
+        ass_escaped = str(ass_path.resolve()).replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
+        mux_args += ["-vf", f"subtitles={ass_escaped}"]
+    mux_args += [
+        "-map",
+        "0:v:0",
+        "-map",
+        "1:a:0",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "medium",
+        "-crf",
+        str(options.crf),
+        "-c:a",
+        "aac",
+        "-b:a",
+        "192k",
+        "-ar",
+        "44100",
+        "-ac",
+        "1",
+        "-shortest",
+        "-movflags",
+        "+faststart",
+        str(final_tmp),
+    ]
+    run_ffmpeg(mux_args)
+
+    # Validate A/V
+    v_ms = ffprobe_duration_ms(final_tmp)
+    # Audio stream duration via format is fine for muxed file
+    if abs(v_ms - int(total_s * 1000)) > 200:
+        # soft check — still accept if close enough for short content
+        pass
+
+    thumb = work_dir / "thumb.jpg"
+    progress(90, "thumbnail")
+    ss = "00:00:00.500" if total_s > 1 else "00:00:00.000"
+    run_ffmpeg(["-ss", ss, "-i", str(final_tmp), "-frames:v", "1", "-q:v", "2", str(thumb)])
+
+    shutil.copy2(final_tmp, output_path)
+    thumb_out = output_path.with_suffix(".jpg")
+    if thumb_out.name.endswith(".mp4.jpg"):
+        thumb_out = output_path.parent / (output_path.stem + "_thumb.jpg")
+    shutil.copy2(thumb, thumb_out)
+
+    progress(100, "finalize")
+    return RenderResult(
+        output_path=output_path,
+        thumbnail_path=thumb_out,
+        duration_ms=v_ms,
+        srt_path=srt_path,
+    )

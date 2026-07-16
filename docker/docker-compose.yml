@@ -1,0 +1,119 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: video
+      POSTGRES_PASSWORD: video
+      POSTGRES_DB: video_creator
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U video -d video_creator"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL: postgresql+psycopg://video:video@postgres:5432/video_creator
+      REDIS_URL: redis://redis:6379/0
+      STORAGE_ROOT: /data
+      SECRET_KEY: dev-compose-secret-change-me-please-32
+      ENVIRONMENT: development
+      CORS_ORIGINS: http://localhost:5173,http://localhost:3000,http://localhost
+      DEEPGRAM_API_KEY: ${DEEPGRAM_API_KEY:-}
+      TTS_MOCK: ${TTS_MOCK:-true}
+      CELERY_TASK_ALWAYS_EAGER: "false"
+    volumes:
+      - mediadata:/data
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker-tts:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile.worker
+    command: celery -A app.workers.celery_app.celery_app worker -Q tts,default -c 2 -l info
+    environment:
+      DATABASE_URL: postgresql+psycopg://video:video@postgres:5432/video_creator
+      REDIS_URL: redis://redis:6379/0
+      STORAGE_ROOT: /data
+      SECRET_KEY: dev-compose-secret-change-me-please-32
+      ENVIRONMENT: development
+      DEEPGRAM_API_KEY: ${DEEPGRAM_API_KEY:-}
+      TTS_MOCK: ${TTS_MOCK:-true}
+    volumes:
+      - mediadata:/data
+    depends_on:
+      - api
+      - redis
+      - postgres
+
+  worker-render:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile.worker
+    command: celery -A app.workers.celery_app.celery_app worker -Q render -c 1 -l info
+    environment:
+      DATABASE_URL: postgresql+psycopg://video:video@postgres:5432/video_creator
+      REDIS_URL: redis://redis:6379/0
+      STORAGE_ROOT: /data
+      SECRET_KEY: dev-compose-secret-change-me-please-32
+      ENVIRONMENT: development
+      DEEPGRAM_API_KEY: ${DEEPGRAM_API_KEY:-}
+      TTS_MOCK: ${TTS_MOCK:-true}
+    volumes:
+      - mediadata:/data
+    depends_on:
+      - api
+      - redis
+      - postgres
+
+  beat:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile.worker
+    command: celery -A app.workers.celery_app.celery_app beat -l info
+    environment:
+      DATABASE_URL: postgresql+psycopg://video:video@postgres:5432/video_creator
+      REDIS_URL: redis://redis:6379/0
+      STORAGE_ROOT: /data
+      SECRET_KEY: dev-compose-secret-change-me-please-32
+    volumes:
+      - mediadata:/data
+    depends_on:
+      - redis
+      - postgres
+
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:80"
+    depends_on:
+      - api
+
+volumes:
+  pgdata:
+  mediadata:

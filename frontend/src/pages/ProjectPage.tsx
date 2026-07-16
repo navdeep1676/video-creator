@@ -1,0 +1,972 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link as RouterLink, useNavigate, useParams } from "react-router-dom";
+import {
+  Alert,
+  Box,
+  Button,
+  Card,
+  CardContent,
+  Chip,
+  CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogContentText,
+  DialogTitle,
+  Divider,
+  FormControl,
+  InputLabel,
+  MenuItem,
+  Select,
+  Stack,
+  TextField,
+  Typography,
+} from "@mui/material";
+import CloudUploadIcon from "@mui/icons-material/CloudUpload";
+import RecordVoiceOverIcon from "@mui/icons-material/RecordVoiceOver";
+import MovieCreationIcon from "@mui/icons-material/MovieCreation";
+import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
+import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
+import StopIcon from "@mui/icons-material/Stop";
+import { api, errMessage, mediaUrl } from "../api/client";
+import SlideList from "../components/SlideList";
+import PageHeader from "../components/PageHeader";
+import ProjectFormDialog, { type ProjectFormValues } from "../components/ProjectFormDialog";
+import type { Project } from "../types/project";
+
+type Narration = {
+  id: string;
+  text: string;
+  voice: string;
+  speed: number;
+  audio_url: string | null;
+  tts_status: string;
+  tts_error: string | null;
+  audio_duration_ms: number | null;
+};
+
+type Slide = {
+  id: string;
+  order_index: number;
+  image_url: string | null;
+  duration_ms: number;
+  effective_duration_ms: number;
+  transition: string;
+  animation: string;
+  narration: Narration | null;
+};
+
+type Voice = {
+  id: string;
+  name: string;
+  language: string;
+  language_label?: string;
+  gender: string;
+  accent?: string;
+  provider?: string;
+  providers?: string[];
+  runtime_provider?: string;
+  requires_deepgram_key?: boolean;
+};
+
+type Language = { code: string; label: string };
+
+type TtsProvidersStatus = {
+  deepgram_available: boolean;
+  edge_available: boolean;
+  providers: { id: string; label: string; available: boolean; description: string }[];
+};
+
+type Draft = {
+  slideId: string;
+  text: string;
+  voice: string;
+  speed: number;
+  transition: string;
+  animation: string;
+};
+
+function draftFromSlide(slide: Slide): Draft {
+  return {
+    slideId: slide.id,
+    text: slide.narration?.text || "",
+    voice: slide.narration?.voice || "aura-2-thalia-en",
+    speed: slide.narration?.speed ?? 1,
+    transition: slide.transition || "fade",
+    animation: slide.animation || "none",
+  };
+}
+
+function languageForVoice(voiceId: string, voices: Voice[]): string {
+  return voices.find((v) => v.id === voiceId)?.language || "en";
+}
+
+function isDraftDirty(draft: Draft, slide: Slide | null | undefined): boolean {
+  if (!slide || draft.slideId !== slide.id) return false;
+  const base = draftFromSlide(slide);
+  return (
+    draft.text !== base.text ||
+    draft.voice !== base.voice ||
+    draft.speed !== base.speed ||
+    draft.transition !== base.transition ||
+    draft.animation !== base.animation
+  );
+}
+
+export default function ProjectPage() {
+  const { projectId = "" } = useParams();
+  const navigate = useNavigate();
+  const qc = useQueryClient();
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+  const [draft, setDraft] = useState<Draft | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Slide | null>(null);
+  const [editProjectOpen, setEditProjectOpen] = useState(false);
+  const [projectFormError, setProjectFormError] = useState("");
+  const draftRef = useRef<Draft | null>(null);
+  const slidesRef = useRef<Slide[]>([]);
+  const savingRef = useRef(false);
+
+  useEffect(() => {
+    draftRef.current = draft;
+  }, [draft]);
+
+  const projectQuery = useQuery({
+    queryKey: ["project", projectId],
+    queryFn: async () => (await api.get(`/projects/${projectId}`)).data as Project,
+  });
+
+  const updateProjectMutation = useMutation({
+    mutationFn: async (values: ProjectFormValues) => {
+      const { data } = await api.patch(`/projects/${projectId}`, {
+        title: values.title,
+        description: values.description || null,
+        status: values.status,
+      });
+      return data as Project;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["project", projectId] });
+      qc.invalidateQueries({ queryKey: ["projects"] });
+      qc.invalidateQueries({ queryKey: ["projects-summary"] });
+      setEditProjectOpen(false);
+      setSuccess("Project updated");
+    },
+    onError: (e) => setProjectFormError(errMessage(e)),
+  });
+
+  const deleteProjectMutation = useMutation({
+    mutationFn: async () => {
+      await api.delete(`/projects/${projectId}`);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["projects"] });
+      qc.invalidateQueries({ queryKey: ["projects-summary"] });
+      navigate("/projects");
+    },
+    onError: (e) => setError(errMessage(e)),
+  });
+
+  const slidesQuery = useQuery({
+    queryKey: ["slides", projectId],
+    queryFn: async () => (await api.get(`/projects/${projectId}/slides`)).data as Slide[],
+    refetchInterval: (query) => {
+      const data = query.state.data as Slide[] | undefined;
+      if (!data) return false;
+      const busy = data.some((s) => ["queued", "processing"].includes(s.narration?.tts_status || ""));
+      return busy ? 2000 : false;
+    },
+  });
+
+  const languagesQuery = useQuery({
+    queryKey: ["languages"],
+    queryFn: async () => (await api.get("/tts/languages")).data as Language[],
+  });
+
+  const providersQuery = useQuery({
+    queryKey: ["tts-providers"],
+    queryFn: async () => (await api.get("/tts/providers")).data as TtsProvidersStatus,
+  });
+
+  const voicesQuery = useQuery({
+    queryKey: ["voices"],
+    queryFn: async () => (await api.get("/tts/voices")).data as Voice[],
+  });
+
+  const allVoices = voicesQuery.data || [];
+  const languages = languagesQuery.data || [];
+  const deepgramAvailable = providersQuery.data?.deepgram_available ?? false;
+
+  const [languageFilter, setLanguageFilter] = useState<string>("en");
+  // all | deepgram | edge
+  const [engineFilter, setEngineFilter] = useState<string>("all");
+
+  // Keep language filter in sync with selected slide voice
+  useEffect(() => {
+    if (!draft || allVoices.length === 0) return;
+    const lang = languageForVoice(draft.voice, allVoices);
+    setLanguageFilter(lang);
+    const v = allVoices.find((x) => x.id === draft.voice);
+    if (v?.provider === "deepgram") setEngineFilter("deepgram");
+    else if (v?.provider === "edge") setEngineFilter((prev) => (prev === "deepgram" ? "edge" : prev));
+  }, [draft?.slideId, draft?.voice, allVoices]);
+
+  const voicesForLanguage = useMemo(() => {
+    let list = allVoices.filter((v) => v.language === languageFilter);
+    if (engineFilter === "deepgram") {
+      list = list.filter((v) => (v.providers || []).includes("deepgram") || v.provider === "deepgram");
+    } else if (engineFilter === "edge") {
+      list = list.filter((v) => v.provider === "edge");
+    }
+    return list;
+  }, [allVoices, languageFilter, engineFilter]);
+
+  const slides = slidesQuery.data || [];
+  slidesRef.current = slides;
+
+  const selected = useMemo(
+    () => slides.find((s) => s.id === selectedId) || null,
+    [slides, selectedId]
+  );
+
+  // Initial selection
+  useEffect(() => {
+    if (!selectedId && slides[0]) {
+      setSelectedId(slides[0].id);
+    } else if (selectedId && slides.length > 0 && !slides.some((s) => s.id === selectedId)) {
+      // Selected slide deleted
+      setSelectedId(slides[0]?.id ?? null);
+    }
+  }, [slides, selectedId]);
+
+  // Load draft when selected slide changes (not on every poll refresh)
+  useEffect(() => {
+    if (!selected) {
+      setDraft(null);
+      return;
+    }
+    setDraft((prev) => {
+      // Keep in-progress edits for the same slide across background refetches
+      if (prev && prev.slideId === selected.id && isDraftDirty(prev, selected)) {
+        return prev;
+      }
+      return draftFromSlide(selected);
+    });
+  }, [selected?.id]);
+
+  // When server data updates for the current slide and user is not dirty, refresh draft
+  useEffect(() => {
+    if (!selected || !draft) return;
+    if (draft.slideId !== selected.id) return;
+    if (isDraftDirty(draft, selected)) return;
+    const next = draftFromSlide(selected);
+    // Avoid loop: only update if something meaningful changed (e.g. tts finished doesn't change draft fields)
+    if (
+      next.text !== draft.text ||
+      next.voice !== draft.voice ||
+      next.speed !== draft.speed ||
+      next.transition !== draft.transition ||
+      next.animation !== draft.animation
+    ) {
+      setDraft(next);
+    }
+  }, [selected, draft]);
+
+  const persistSlide = useCallback(
+    async (payload: Draft) => {
+      await api.patch(`/slides/${payload.slideId}`, {
+        text: payload.text,
+        voice: payload.voice,
+        speed: payload.speed,
+        transition: payload.transition,
+        animation: payload.animation,
+      });
+    },
+    []
+  );
+
+  const saveDraftIfNeeded = useCallback(
+    async (d: Draft | null) => {
+      if (!d || savingRef.current) return;
+      const slide = slidesRef.current.find((s) => s.id === d.slideId);
+      if (!slide || !isDraftDirty(d, slide)) return;
+      savingRef.current = true;
+      try {
+        await persistSlide(d);
+        await qc.invalidateQueries({ queryKey: ["slides", projectId] });
+      } finally {
+        savingRef.current = false;
+      }
+    },
+    [persistSlide, projectId, qc]
+  );
+
+  const selectSlide = useCallback(
+    async (nextId: string) => {
+      if (nextId === selectedId) return;
+      const current = draftRef.current;
+      // Auto-save previous slide before switching so narration never sticks to the wrong image
+      try {
+        await saveDraftIfNeeded(current);
+      } catch (e) {
+        setError(errMessage(e));
+        return; // stay on current slide if save failed
+      }
+      setSelectedId(nextId);
+    },
+    [selectedId, saveDraftIfNeeded]
+  );
+
+  const saveSlide = useMutation({
+    mutationFn: async () => {
+      const d = draftRef.current;
+      if (!d) return;
+      await persistSlide(d);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["slides", projectId] });
+      setSuccess("Slide saved");
+    },
+    onError: (e) => setError(errMessage(e)),
+  });
+
+  const uploadMutation = useMutation({
+    mutationFn: async (fileList: File[]) => {
+      if (!fileList.length) throw new Error("No files selected");
+      // Save current draft first
+      await saveDraftIfNeeded(draftRef.current);
+      const form = new FormData();
+      fileList.forEach((f) => form.append("files", f));
+      await api.post(`/projects/${projectId}/slides`, form);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["slides", projectId] });
+      setSuccess("Images uploaded");
+    },
+    onError: (e) => setError(errMessage(e)),
+  });
+
+  const ttsOne = useMutation({
+    mutationFn: async (force: boolean) => {
+      const d = draftRef.current;
+      if (!d) return;
+      // Always pin to draft.slideId (not "selected") so a mid-click switch can't mis-associate
+      await persistSlide(d);
+      await api.post("/tts/generate", { slide_id: d.slideId, force });
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["slides", projectId] });
+      setSuccess("Voice generation queued");
+    },
+    onError: (e) => setError(errMessage(e)),
+  });
+
+  const ttsBatch = useMutation({
+    mutationFn: async () => {
+      await saveDraftIfNeeded(draftRef.current);
+      await api.post("/tts/generate-batch", { project_id: projectId, force: false });
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["slides", projectId] });
+      setSuccess("Batch voice generation queued");
+    },
+    onError: (e) => setError(errMessage(e)),
+  });
+
+  const applyLanguageMutation = useMutation({
+    mutationFn: async (payload: { language: string; voice: string; regenerate: boolean }) => {
+      await saveDraftIfNeeded(draftRef.current);
+      return (
+        await api.post("/tts/apply-language", {
+          project_id: projectId,
+          language: payload.language,
+          voice: payload.voice,
+          regenerate: payload.regenerate,
+        })
+      ).data as { updated: number; enqueued: number; language: string; voice: string };
+    },
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ["slides", projectId] });
+      qc.invalidateQueries({ queryKey: ["project", projectId] });
+      setSuccess(
+        data.enqueued > 0
+          ? `Applied ${data.language} voice to ${data.updated} slides · regenerating ${data.enqueued}`
+          : `Applied language voice to ${data.updated} slides`
+      );
+      // Keep editor draft voice in sync
+      setDraft((d) => (d ? { ...d, voice: data.voice } : d));
+      setLanguageFilter(data.language);
+    },
+    onError: (e) => setError(errMessage(e)),
+  });
+
+  const reorderMutation = useMutation({
+    mutationFn: async (slideIds: string[]) => {
+      await saveDraftIfNeeded(draftRef.current);
+      const { data } = await api.post(`/projects/${projectId}/slides/reorder`, {
+        slide_ids: slideIds,
+      });
+      return data as Slide[];
+    },
+    onMutate: async (slideIds) => {
+      await qc.cancelQueries({ queryKey: ["slides", projectId] });
+      const prev = qc.getQueryData<Slide[]>(["slides", projectId]);
+      if (prev) {
+        const byId = new Map(prev.map((s) => [s.id, s]));
+        const optimistic = slideIds
+          .map((id, order_index) => {
+            const s = byId.get(id);
+            return s ? { ...s, order_index } : null;
+          })
+          .filter(Boolean) as Slide[];
+        qc.setQueryData(["slides", projectId], optimistic);
+      }
+      return { prev };
+    },
+    onError: (e, _ids, ctx) => {
+      if (ctx?.prev) qc.setQueryData(["slides", projectId], ctx.prev);
+      setError(errMessage(e));
+    },
+    onSuccess: (data) => {
+      qc.setQueryData(["slides", projectId], data);
+      setSuccess("Slides reordered");
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ["slides", projectId] });
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (slideId: string) => {
+      // If deleting another slide, still save current draft first
+      if (draftRef.current && draftRef.current.slideId !== slideId) {
+        await saveDraftIfNeeded(draftRef.current);
+      }
+      await api.delete(`/slides/${slideId}`);
+      return slideId;
+    },
+    onSuccess: (slideId) => {
+      setDeleteTarget(null);
+      if (selectedId === slideId) {
+        const remaining = slidesRef.current.filter((s) => s.id !== slideId);
+        setSelectedId(remaining[0]?.id ?? null);
+        setDraft(null);
+      }
+      qc.invalidateQueries({ queryKey: ["slides", projectId] });
+      setSuccess("Slide deleted");
+    },
+    onError: (e) => setError(errMessage(e)),
+  });
+
+  const moveSlide = useCallback(
+    (id: string, direction: "up" | "down") => {
+      const ids = slides.map((s) => s.id);
+      const idx = ids.indexOf(id);
+      if (idx < 0) return;
+      const swap = direction === "up" ? idx - 1 : idx + 1;
+      if (swap < 0 || swap >= ids.length) return;
+      const next = [...ids];
+      [next[idx], next[swap]] = [next[swap], next[idx]];
+      reorderMutation.mutate(next);
+    },
+    [slides, reorderMutation]
+  );
+
+  const readyCount = slides.filter((s) => s.narration?.tts_status === "ready").length;
+  const busyTtsCount = slides.filter((s) =>
+    ["queued", "processing"].includes(s.narration?.tts_status || "")
+  ).length;
+  const totalDuration = slides.reduce((a, s) => a + s.effective_duration_ms, 0);
+  const dirty = selected ? isDraftDirty(draft ?? draftFromSlide(selected), selected) : false;
+
+  const stopJobsMutation = useMutation({
+    mutationFn: async () => {
+      // Stop TTS + any active renders for this project
+      const { data } = await api.post(`/video/projects/${projectId}/stop`);
+      return data as { cancelled_tts: number; cancelled_renders: number; revoked_tasks: number };
+    },
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ["slides", projectId] });
+      setSuccess(
+        `Stopped processes · TTS: ${data.cancelled_tts} · renders: ${data.cancelled_renders}`
+      );
+    },
+    onError: (e) => setError(errMessage(e)),
+  });
+
+  // Only show editor when draft is for the currently selected slide
+  const editorReady = selected && draft && draft.slideId === selected.id;
+
+  return (
+    <Stack spacing={3}>
+      <PageHeader
+        title={projectQuery.data?.title || "Project"}
+        subtitle={`${slides.length} slides · ${(totalDuration / 1000).toFixed(1)}s total · ${readyCount} voices ready${
+          busyTtsCount ? ` · ${busyTtsCount} generating` : ""
+        }${dirty ? " · unsaved changes" : ""}`}
+        crumbs={[
+          { label: "Dashboard", to: "/" },
+          { label: "Projects", to: "/projects" },
+          { label: projectQuery.data?.title || "Editor" },
+        ]}
+        actions={
+          <>
+            <Button
+              color="error"
+              variant="outlined"
+              startIcon={<StopIcon />}
+              disabled={stopJobsMutation.isPending || busyTtsCount === 0}
+              onClick={() => stopJobsMutation.mutate()}
+            >
+              {stopJobsMutation.isPending ? "Stopping…" : "Stop processes"}
+            </Button>
+            <Button
+              variant="outlined"
+              startIcon={<EditOutlinedIcon />}
+              onClick={() => {
+                setProjectFormError("");
+                setEditProjectOpen(true);
+              }}
+            >
+              Edit project
+            </Button>
+            <Button
+              color="error"
+              variant="outlined"
+              startIcon={<DeleteOutlineIcon />}
+              disabled={deleteProjectMutation.isPending}
+              onClick={() => {
+                if (
+                  window.confirm(
+                    `Delete project “${projectQuery.data?.title || "this project"}”? This cannot be undone.`
+                  )
+                ) {
+                  deleteProjectMutation.mutate();
+                }
+              }}
+            >
+              Delete
+            </Button>
+            <Button
+              variant="contained"
+              color="secondary"
+              startIcon={<MovieCreationIcon />}
+              component={RouterLink}
+              to={`/projects/${projectId}/export`}
+              disabled={slides.length === 0}
+              onClick={async (e) => {
+                try {
+                  await saveDraftIfNeeded(draftRef.current);
+                } catch (err) {
+                  e.preventDefault();
+                  setError(errMessage(err));
+                }
+              }}
+            >
+              Export video
+            </Button>
+          </>
+        }
+      />
+
+      {error && (
+        <Alert severity="error" onClose={() => setError("")}>
+          {error}
+        </Alert>
+      )}
+      {success && (
+        <Alert severity="success" onClose={() => setSuccess("")}>
+          {success}
+        </Alert>
+      )}
+
+      <Card>
+        <CardContent>
+          <Stack direction={{ xs: "column", sm: "row" }} spacing={2} alignItems="center">
+            <Button
+              variant="contained"
+              component="label"
+              startIcon={<CloudUploadIcon />}
+              disabled={uploadMutation.isPending}
+            >
+              Upload images
+              <input
+                hidden
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                multiple
+                onChange={(e) => {
+                  const picked = e.target.files ? Array.from(e.target.files) : [];
+                  e.target.value = "";
+                  if (picked.length) uploadMutation.mutate(picked);
+                }}
+              />
+            </Button>
+            <Button
+              variant="outlined"
+              startIcon={<RecordVoiceOverIcon />}
+              onClick={() => ttsBatch.mutate()}
+              disabled={ttsBatch.isPending || slides.length === 0 || busyTtsCount > 0}
+            >
+              Generate all voices
+            </Button>
+            <Button
+              color="error"
+              variant="outlined"
+              startIcon={<StopIcon />}
+              disabled={stopJobsMutation.isPending || busyTtsCount === 0}
+              onClick={() => stopJobsMutation.mutate()}
+            >
+              {stopJobsMutation.isPending ? "Stopping…" : "Stop generating"}
+            </Button>
+            {uploadMutation.isPending && <CircularProgress size={22} />}
+          </Stack>
+        </CardContent>
+      </Card>
+
+      <Stack direction={{ xs: "column", md: "row" }} spacing={2} alignItems="stretch">
+        <Card sx={{ width: { md: 320 }, flexShrink: 0 }}>
+          <CardContent>
+            <Typography variant="subtitle1" fontWeight={700} gutterBottom>
+              Slides
+            </Typography>
+            <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1.5 }}>
+              Drag ⋮⋮ to reorder · use ↑↓ or delete on each slide
+            </Typography>
+            <SlideList
+              slides={slides}
+              selectedId={selected?.id ?? null}
+              dirtySelected={dirty}
+              draftPreview={draft?.slideId === selected?.id ? draft?.text ?? null : null}
+              disabled={reorderMutation.isPending || deleteMutation.isPending}
+              onSelect={(id) => selectSlide(id)}
+              onReorder={(ids) => reorderMutation.mutate(ids)}
+              onDelete={(id) => {
+                const s = slides.find((x) => x.id === id) || null;
+                setDeleteTarget(s);
+              }}
+              onMove={moveSlide}
+            />
+          </CardContent>
+        </Card>
+
+        <Card sx={{ flex: 1 }}>
+          <CardContent>
+            {!selected && <Typography color="text.secondary">Select a slide to edit narration.</Typography>}
+            {editorReady && selected && draft && (
+              // key forces a clean editor remount when the slide changes
+              <Stack spacing={2} key={selected.id}>
+                <Box
+                  component="img"
+                  src={mediaUrl(selected.image_url)}
+                  alt={`Slide ${selected.order_index + 1}`}
+                  sx={{
+                    width: "100%",
+                    maxHeight: 320,
+                    objectFit: "contain",
+                    bgcolor: "#0f172a",
+                    borderRadius: 2,
+                  }}
+                />
+                <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
+                  <Chip label={`Slide ${selected.order_index + 1}`} color="primary" size="small" />
+                  <Chip label={`${(selected.effective_duration_ms / 1000).toFixed(1)}s`} />
+                  <Chip label={selected.narration?.tts_status || "missing"} />
+                  {dirty && <Chip label="Unsaved" color="warning" size="small" />}
+                  {selected.narration?.tts_error && (
+                    <Typography color="error" variant="caption">
+                      {selected.narration.tts_error}
+                    </Typography>
+                  )}
+                </Stack>
+                <TextField
+                  label={`Narration script (slide ${selected.order_index + 1})`}
+                  value={draft.text}
+                  onChange={(e) => setDraft((d) => (d ? { ...d, text: e.target.value } : d))}
+                  fullWidth
+                  multiline
+                  minRows={4}
+                  placeholder="Write the spoken script for this slide…"
+                  inputProps={{ "data-slide-id": selected.id }}
+                />
+                <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
+                  <FormControl fullWidth>
+                    <InputLabel>TTS engine</InputLabel>
+                    <Select
+                      label="TTS engine"
+                      value={engineFilter}
+                      onChange={(e) => {
+                        const eng = e.target.value;
+                        setEngineFilter(eng);
+                        const pool = allVoices.filter((v) => {
+                          if (v.language !== languageFilter) return false;
+                          if (eng === "deepgram")
+                            return (v.providers || []).includes("deepgram") || v.provider === "deepgram";
+                          if (eng === "edge") return v.provider === "edge";
+                          return true;
+                        });
+                        const first =
+                          pool.find((v) => v.gender === "female") || pool[0];
+                        if (first) setDraft((d) => (d ? { ...d, voice: first.id } : d));
+                      }}
+                    >
+                      <MenuItem value="all">All engines</MenuItem>
+                      <MenuItem value="deepgram">
+                        Deepgram Aura 2{deepgramAvailable ? "" : " (needs API key)"}
+                      </MenuItem>
+                      <MenuItem value="edge">Edge free</MenuItem>
+                    </Select>
+                  </FormControl>
+                  <FormControl fullWidth>
+                    <InputLabel>Language</InputLabel>
+                    <Select
+                      label="Language"
+                      value={languageFilter}
+                      onChange={(e) => {
+                        const lang = e.target.value;
+                        setLanguageFilter(lang);
+                        const pool = allVoices.filter((v) => {
+                          if (v.language !== lang) return false;
+                          if (engineFilter === "deepgram")
+                            return (v.providers || []).includes("deepgram") || v.provider === "deepgram";
+                          if (engineFilter === "edge") return v.provider === "edge";
+                          return true;
+                        });
+                        const first =
+                          pool.find((v) => v.gender === "female") || pool[0];
+                        if (first) {
+                          setDraft((d) => (d ? { ...d, voice: first.id } : d));
+                        }
+                      }}
+                    >
+                      {languages.map((lang) => (
+                        <MenuItem key={lang.code} value={lang.code}>
+                          {lang.label}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                  <FormControl fullWidth>
+                    <InputLabel>Voice</InputLabel>
+                    <Select
+                      label="Voice"
+                      value={
+                        voicesForLanguage.some((v) => v.id === draft.voice)
+                          ? draft.voice
+                          : voicesForLanguage[0]?.id || draft.voice
+                      }
+                      onChange={(e) => setDraft((d) => (d ? { ...d, voice: e.target.value } : d))}
+                    >
+                      {voicesForLanguage.map((v) => {
+                        const isAura = (v.providers || []).includes("deepgram") || v.provider === "deepgram";
+                        const tag = isAura ? "Aura 2" : "Edge";
+                        const accent = v.accent ? ` · ${v.accent}` : "";
+                        return (
+                          <MenuItem key={v.id} value={v.id}>
+                            {v.name} ({v.gender}) · {tag}
+                            {accent}
+                          </MenuItem>
+                        );
+                      })}
+                    </Select>
+                  </FormControl>
+                  <FormControl fullWidth>
+                    <InputLabel>Speed</InputLabel>
+                    <Select
+                      label="Speed"
+                      value={String(draft.speed)}
+                      onChange={(e) =>
+                        setDraft((d) => (d ? { ...d, speed: Number(e.target.value) } : d))
+                      }
+                    >
+                      {[0.8, 0.9, 1.0, 1.1, 1.2].map((s) => (
+                        <MenuItem key={s} value={String(s)}>
+                          {s}x
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                </Stack>
+                {!deepgramAvailable && engineFilter === "deepgram" && (
+                  <Alert severity="warning">
+                    Deepgram Aura 2 needs <code>DEEPGRAM_API_KEY</code> in docker env. Without it,
+                    Aura voices fall back to free Edge (or fail if no fallback).
+                  </Alert>
+                )}
+                {deepgramAvailable &&
+                  ((allVoices.find((v) => v.id === draft.voice)?.providers || []).includes("deepgram") ||
+                    allVoices.find((v) => v.id === draft.voice)?.provider === "deepgram") && (
+                    <Alert severity="info">
+                      This voice will use <strong>Deepgram Aura 2</strong> (premium neural TTS).
+                    </Alert>
+                  )}
+                <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap alignItems="center">
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    disabled={
+                      applyLanguageMutation.isPending || !languageFilter || slides.length === 0
+                    }
+                    onClick={() => {
+                      const voice =
+                        voicesForLanguage.find((v) => v.id === draft.voice)?.id ||
+                        voicesForLanguage[0]?.id;
+                      if (!voice) return;
+                      applyLanguageMutation.mutate({
+                        language: languageFilter,
+                        voice,
+                        regenerate: false,
+                      });
+                    }}
+                  >
+                    Apply language to all slides
+                  </Button>
+                  <Button
+                    size="small"
+                    variant="text"
+                    disabled={
+                      applyLanguageMutation.isPending || !languageFilter || slides.length === 0
+                    }
+                    onClick={() => {
+                      const voice =
+                        voicesForLanguage.find((v) => v.id === draft.voice)?.id ||
+                        voicesForLanguage[0]?.id;
+                      if (!voice) return;
+                      applyLanguageMutation.mutate({
+                        language: languageFilter,
+                        voice,
+                        regenerate: true,
+                      });
+                    }}
+                  >
+                    Apply + regenerate all voices
+                  </Button>
+                  <Typography variant="caption" color="text.secondary">
+                    Write narration in that language, then generate voice.
+                  </Typography>
+                </Stack>
+                <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
+                  <FormControl fullWidth>
+                    <InputLabel>Transition</InputLabel>
+                    <Select
+                      label="Transition"
+                      value={draft.transition}
+                      onChange={(e) =>
+                        setDraft((d) => (d ? { ...d, transition: e.target.value } : d))
+                      }
+                    >
+                      <MenuItem value="fade">Fade</MenuItem>
+                      <MenuItem value="none">None</MenuItem>
+                    </Select>
+                  </FormControl>
+                  <FormControl fullWidth>
+                    <InputLabel>Animation</InputLabel>
+                    <Select
+                      label="Animation"
+                      value={draft.animation}
+                      onChange={(e) =>
+                        setDraft((d) => (d ? { ...d, animation: e.target.value } : d))
+                      }
+                    >
+                      <MenuItem value="none">None (static)</MenuItem>
+                      <MenuItem value="ken_burns">Ken Burns (slow zoom)</MenuItem>
+                    </Select>
+                  </FormControl>
+                </Stack>
+                <Divider />
+                <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                  <Button
+                    variant="outlined"
+                    onClick={() => saveSlide.mutate()}
+                    disabled={saveSlide.isPending || !dirty}
+                  >
+                    Save slide
+                  </Button>
+                  <Button
+                    variant="contained"
+                    startIcon={<RecordVoiceOverIcon />}
+                    onClick={() => ttsOne.mutate(false)}
+                    disabled={ttsOne.isPending || !draft.text.trim()}
+                  >
+                    Generate voice
+                  </Button>
+                  <Button
+                    variant="text"
+                    onClick={() => ttsOne.mutate(true)}
+                    disabled={ttsOne.isPending || !draft.text.trim()}
+                  >
+                    Force regenerate
+                  </Button>
+                  <Button
+                    color="error"
+                    variant="outlined"
+                    startIcon={<DeleteOutlineIcon />}
+                    onClick={() => setDeleteTarget(selected)}
+                    disabled={deleteMutation.isPending}
+                  >
+                    Delete slide
+                  </Button>
+                </Stack>
+                {selected.narration?.audio_url && (
+                  <Box>
+                    <Typography variant="subtitle2" gutterBottom>
+                      Preview audio
+                    </Typography>
+                    {/* key remounts audio element when slide/audio changes */}
+                    <audio
+                      key={selected.narration.audio_url}
+                      controls
+                      src={mediaUrl(selected.narration.audio_url)}
+                      style={{ width: "100%" }}
+                    />
+                  </Box>
+                )}
+              </Stack>
+            )}
+          </CardContent>
+        </Card>
+      </Stack>
+
+      <Dialog open={!!deleteTarget} onClose={() => setDeleteTarget(null)}>
+        <DialogTitle>Delete slide?</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            This permanently removes the image and narration
+            {deleteTarget ? ` for slide ${(deleteTarget.order_index ?? 0) + 1}` : ""}. This cannot be undone.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDeleteTarget(null)}>Cancel</Button>
+          <Button
+            color="error"
+            variant="contained"
+            disabled={deleteMutation.isPending}
+            onClick={() => {
+              if (deleteTarget) deleteMutation.mutate(deleteTarget.id);
+            }}
+          >
+            {deleteMutation.isPending ? "Deleting…" : "Delete"}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <ProjectFormDialog
+        open={editProjectOpen}
+        mode="edit"
+        project={projectQuery.data}
+        loading={updateProjectMutation.isPending}
+        error={projectFormError}
+        onClose={() => {
+          setEditProjectOpen(false);
+          setProjectFormError("");
+        }}
+        onSubmit={(values) => {
+          setProjectFormError("");
+          updateProjectMutation.mutate(values);
+        }}
+      />
+    </Stack>
+  );
+}

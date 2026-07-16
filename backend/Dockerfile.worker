@@ -1,0 +1,26 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Noto + Lohit: Hindi/Devanagari and other scripts (DejaVu lacks those glyphs → black boxes)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    espeak-ng \
+    fonts-dejavu-core \
+    fonts-noto-core \
+    fonts-noto-ui-core \
+    fonts-noto-extra \
+    fonts-noto-cjk \
+    fonts-lohit-deva \
+    fontconfig \
+    libmagic1 \
+    && fc-cache -f \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+ENV PYTHONPATH=/app
+ENV STORAGE_ROOT=/data
