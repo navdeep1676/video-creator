@@ -13,6 +13,7 @@ from app.schemas.common import (
     LoginRequest,
     RegisterRequest,
     TokenResponse,
+    UpdateProfileRequest,
     UserOut,
 )
 from app.utils.exceptions import AppError
@@ -111,6 +112,36 @@ def logout(response: Response) -> dict:
 @router.get("/me", response_model=UserOut)
 def me(user: User = Depends(get_current_user)) -> User:
     return user
+
+
+@router.patch("/me", response_model=UserOut)
+def update_profile(
+    body: UpdateProfileRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> UserOut:
+    """Update display name and/or email for the current user."""
+    if body.display_name is None and body.email is None:
+        raise AppError("VALIDATION", "Provide display_name and/or email to update", 400)
+
+    if body.display_name is not None:
+        name = body.display_name.strip()
+        if not name:
+            raise AppError("VALIDATION", "Display name cannot be empty", 400)
+        user.display_name = name
+
+    if body.email is not None:
+        new_email = str(body.email).lower().strip()
+        if new_email != user.email:
+            taken = db.scalar(select(User).where(User.email == new_email, User.id != user.id))
+            if taken:
+                raise AppError("EMAIL_TAKEN", "Email already registered", 409)
+            user.email = new_email
+
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return UserOut.model_validate(user)
 
 
 @router.post("/change-password")

@@ -33,6 +33,7 @@ export type SlideListItem = {
   id: string;
   order_index: number;
   image_url: string | null;
+  image_count?: number;
   narration: { text: string; tts_status: string } | null;
 };
 
@@ -93,11 +94,21 @@ function SortableSlideRow({
       sx={{
         border: "1px solid",
         borderColor: isActive ? "primary.main" : "divider",
-        borderRadius: 2,
-        p: 1,
+        borderRadius: 2.5,
+        p: 1.1,
         cursor: "pointer",
-        bgcolor: isActive ? "action.selected" : "background.paper",
-        boxShadow: isDragging ? 4 : 0,
+        bgcolor: isActive ? "rgba(109, 40, 217, 0.06)" : "background.paper",
+        boxShadow: isDragging
+          ? "0 12px 28px rgba(109, 40, 217, 0.18)"
+          : isActive
+            ? "0 6px 16px rgba(109, 40, 217, 0.1)"
+            : "0 1px 2px rgba(15, 23, 42, 0.04)",
+        transition: "border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease, transform 0.18s ease",
+        transform: isActive ? "translateX(2px)" : "none",
+        "&:hover": {
+          borderColor: isActive ? "primary.main" : "rgba(109, 40, 217, 0.35)",
+          bgcolor: isActive ? "rgba(109, 40, 217, 0.08)" : "rgba(109, 40, 217, 0.02)",
+        },
       }}
     >
       <Stack direction="row" spacing={0.5} alignItems="flex-start">
@@ -115,12 +126,33 @@ function SortableSlideRow({
           </IconButton>
         </Tooltip>
 
-        <Box
-          component="img"
-          src={mediaUrl(slide.image_url)}
-          alt=""
-          sx={{ width: 56, height: 40, objectFit: "cover", borderRadius: 1, bgcolor: "#eee", mt: 0.5 }}
-        />
+        {slide.image_url ? (
+          <Box
+            component="img"
+            src={mediaUrl(slide.image_url)}
+            alt=""
+            sx={{ width: 56, height: 40, objectFit: "cover", borderRadius: 1, bgcolor: "#eee", mt: 0.5 }}
+          />
+        ) : (
+          <Box
+            sx={{
+              width: 56,
+              height: 40,
+              borderRadius: 1,
+              bgcolor: "action.hover",
+              border: "1px dashed",
+              borderColor: "divider",
+              mt: 0.5,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <Typography variant="caption" color="text.secondary" fontSize={9}>
+              empty
+            </Typography>
+          </Box>
+        )}
 
         <Box flex={1} minWidth={0}>
           <Typography variant="body2" fontWeight={600}>
@@ -130,22 +162,27 @@ function SortableSlideRow({
           <Typography variant="caption" color="text.secondary" noWrap display="block">
             {preview}
           </Typography>
-          <Chip
-            size="small"
-            label={slide.narration?.tts_status || "missing"}
-            color={
-              slide.narration?.tts_status === "ready"
-                ? "success"
-                : slide.narration?.tts_status === "failed" ||
-                    slide.narration?.tts_status === "cancelled"
-                  ? "error"
-                  : slide.narration?.tts_status === "processing" ||
-                      slide.narration?.tts_status === "queued"
-                    ? "warning"
-                    : "default"
-            }
-            sx={{ height: 20, fontSize: 11, mt: 0.5 }}
-          />
+          <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap sx={{ mt: 0.5 }}>
+            {(slide.image_count ?? 0) > 1 && (
+              <Chip size="small" label={`${slide.image_count} imgs`} sx={{ height: 20, fontSize: 11 }} />
+            )}
+            <Chip
+              size="small"
+              label={slide.narration?.tts_status || "missing"}
+              color={
+                slide.narration?.tts_status === "ready"
+                  ? "success"
+                  : slide.narration?.tts_status === "failed" ||
+                      slide.narration?.tts_status === "cancelled"
+                    ? "error"
+                    : slide.narration?.tts_status === "processing" ||
+                        slide.narration?.tts_status === "queued"
+                      ? "warning"
+                      : "default"
+              }
+              sx={{ height: 20, fontSize: 11 }}
+            />
+          </Stack>
         </Box>
 
         <Stack spacing={0} onClick={(e) => e.stopPropagation()}>

@@ -13,6 +13,7 @@ from sqlalchemy.orm import selectinload
 from app.config import get_settings
 from app.db.models import MusicAsset, Narration, Project, Slide, VideoJob
 from app.db.session import SessionLocal
+from app.services.aspect_ratios import DEFAULT_ASPECT_RATIO, canvas_for_quality, resolve_aspect_ratio
 from app.services.duration import effective_duration_ms
 from app.services.ffmpeg_pipeline import RenderOptions, SlideMedia, render_project_video
 from app.services.storage import get_storage
@@ -205,11 +206,21 @@ def render_video(self, job_id: str) -> dict:
             n = s.narration
             if not n or n.tts_status != "ready" or not n.audio_key:
                 raise NonRetryableTaskError("VALIDATION", f"Slide {s.id} missing ready TTS audio")
+            entries = s.all_image_entries()
+            if not entries:
+                raise NonRetryableTaskError("VALIDATION", f"Slide {s.id} has no images")
+            image_paths = [storage.absolute_path(e["key"]) for e in entries]
+            image_durs = [e.get("duration_ms") for e in entries]
+            for p in image_paths:
+                if not p.is_file():
+                    raise NonRetryableTaskError("VALIDATION", f"Slide {s.id} image missing: {p.name}")
             audio_path = storage.absolute_path(n.audio_key)
             media.append(
                 SlideMedia(
                     slide_id=str(s.id),
-                    image_path=storage.absolute_path(s.image_key),
+                    image_path=image_paths[0],
+                    image_paths=image_paths,
+                    image_durations_ms=image_durs,
                     audio_path=audio_path,
                     text=n.text or "",
                     duration_ms=effective_duration_ms(s, n),
@@ -226,6 +237,22 @@ def render_video(self, job_id: str) -> dict:
             asset = db.get(MusicAsset, UUID(bgm_id))
             if asset and asset.project_id == job.project_id:
                 bgm_path = storage.absolute_path(asset.storage_key)
+
+        # Resolve canvas size from job quality + aspect ratio
+        quality = str(opts.get("quality") or "full")
+        try:
+            preset = resolve_aspect_ratio(opts.get("aspect_ratio") or DEFAULT_ASPECT_RATIO)
+            qw, qh, qcrf, qfps = canvas_for_quality(preset, quality)
+            render_w = int(opts.get("width") or qw)
+            render_h = int(opts.get("height") or qh)
+            crf = int(opts.get("crf") or qcrf)
+            fps = int(opts.get("fps") or qfps)
+        except ValueError:
+            render_w = int(opts.get("width") or settings.video_width)
+            render_h = int(opts.get("height") or settings.video_height)
+            crf = int(opts.get("crf") or 20)
+            fps = int(opts.get("fps") or settings.video_fps)
+        x264_preset = str(opts.get("x264_preset") or ("veryfast" if quality == "draft" else "medium"))
 
         video_key = f"uploads/{job.project_id}/videos/{job.id}.mp4"
         thumb_key = f"uploads/{job.project_id}/thumbnails/{job.id}.jpg"
@@ -249,10 +276,14 @@ def render_video(self, job_id: str) -> dict:
             output_path=output_path,
             work_dir=work_dir,
             options=RenderOptions(
-                width=settings.video_width,
-                height=settings.video_height,
-                fps=settings.video_fps,
+                width=render_w,
+                height=render_h,
+                fps=fps,
+                crf=crf,
+                x264_preset=x264_preset,
                 include_subtitles=bool(opts.get("include_subtitles", True)),
+                caption_style=str(opts.get("caption_style") or "auto"),
+                aspect_ratio=str(opts.get("aspect_ratio") or "") or None,
                 bgm_path=bgm_path,
                 bgm_volume=float(opts.get("background_music_volume", 0.15)),
                 fade_s=settings.fade_s,

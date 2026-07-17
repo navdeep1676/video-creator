@@ -26,6 +26,21 @@ async def lifespan(_: FastAPI):
             conn.exec_driver_sql(
                 "ALTER TABLE narrations ADD COLUMN IF NOT EXISTS celery_task_id VARCHAR(255)"
             )
+            conn.exec_driver_sql(
+                "ALTER TABLE slides ADD COLUMN IF NOT EXISTS image_keys JSONB DEFAULT '[]'::jsonb"
+            )
+            conn.exec_driver_sql(
+                "ALTER TABLE slides ALTER COLUMN image_key DROP NOT NULL"
+            )
+            # Backfill multi-image list from legacy single image_key
+            conn.exec_driver_sql(
+                """
+                UPDATE slides
+                SET image_keys = jsonb_build_array(image_key)
+                WHERE image_key IS NOT NULL
+                  AND (image_keys IS NULL OR image_keys = '[]'::jsonb)
+                """
+            )
     except Exception:
         pass
     yield

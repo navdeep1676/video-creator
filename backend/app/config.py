@@ -6,7 +6,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    app_name: str = "AI Learning Video Generator"
+    app_name: str = "Naratto"
     environment: str = "development"  # development | production
     api_prefix: str = "/api/v1"
     secret_key: str = "dev-secret-change-me-in-production-min-32-chars"
@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     max_video_upload_bytes: int = 200 * 1024 * 1024  # 200 MB for clipper source
     max_clipper_frames: int = 50
     max_slides_per_project: int = 50
+    max_images_per_slide: int = 12
     max_video_duration_s: int = 20 * 60
     max_user_storage_bytes: int = 2 * 1024 * 1024 * 1024  # 2 GB
     default_duration_ms: int = 5000
@@ -37,7 +38,7 @@ class Settings(BaseSettings):
     video_fps: int = 30
     ken_burns_zoom_end: float = 1.15
     feature_bgm: bool = True
-    default_voice: str = "aura-2-thalia-en"
+    default_voice: str = "edge-en-ava"
 
     celery_task_always_eager: bool = False
     render_hard_limit_s: int = 1800

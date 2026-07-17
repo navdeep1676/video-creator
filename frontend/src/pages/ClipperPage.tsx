@@ -178,8 +178,8 @@ export default function ClipperPage() {
     <Stack spacing={3}>
       <PageHeader
         title="AI Video Image Clipper"
-        subtitle="Upload a video, extract stills as slides, write narration, then generate AI voiceover and export."
-        crumbs={[{ label: "Dashboard", to: "/" }, { label: "Clipper" }]}
+        subtitle="Naratto clipper — upload a video, extract stills as slides, write narration, then generate AI voiceover and export."
+        crumbs={[{ label: "Dashboard", to: "/dashboard" }, { label: "Clipper" }]}
       />
 
       {error && (

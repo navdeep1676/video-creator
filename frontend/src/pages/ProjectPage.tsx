@@ -12,28 +12,38 @@ import {
   Dialog,
   DialogActions,
   DialogContent,
-  DialogContentText,
   DialogTitle,
   Divider,
   FormControl,
+  IconButton,
   InputLabel,
   MenuItem,
   Select,
   Stack,
   TextField,
+  Tooltip,
   Typography,
 } from "@mui/material";
 import CloudUploadIcon from "@mui/icons-material/CloudUpload";
+import AddPhotoAlternateIcon from "@mui/icons-material/AddPhotoAlternate";
+import NoteAddIcon from "@mui/icons-material/NoteAdd";
 import RecordVoiceOverIcon from "@mui/icons-material/RecordVoiceOver";
 import MovieCreationIcon from "@mui/icons-material/MovieCreation";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
 import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
 import StopIcon from "@mui/icons-material/Stop";
+import VisibilityIcon from "@mui/icons-material/Visibility";
+import CloseIcon from "@mui/icons-material/Close";
+import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
+import ChevronRightIcon from "@mui/icons-material/ChevronRight";
+import OpenInNewIcon from "@mui/icons-material/OpenInNew";
 import { api, errMessage, mediaUrl } from "../api/client";
 import SlideList from "../components/SlideList";
 import PageHeader from "../components/PageHeader";
 import ProjectFormDialog, { type ProjectFormValues } from "../components/ProjectFormDialog";
+import ConfirmDialog from "../components/ConfirmDialog";
 import type { Project } from "../types/project";
+import { getAspectOption } from "../types/aspectRatio";
 
 type Narration = {
   id: string;
@@ -46,10 +56,19 @@ type Narration = {
   audio_duration_ms: number | null;
 };
 
+type SlideImage = {
+  index: number;
+  image_key: string;
+  image_url: string | null;
+  duration_ms?: number | null;
+};
+
 type Slide = {
   id: string;
   order_index: number;
   image_url: string | null;
+  images?: SlideImage[];
+  image_count?: number;
   duration_ms: number;
   effective_duration_ms: number;
   transition: string;
@@ -91,7 +110,7 @@ function draftFromSlide(slide: Slide): Draft {
   return {
     slideId: slide.id,
     text: slide.narration?.text || "",
-    voice: slide.narration?.voice || "aura-2-thalia-en",
+    voice: slide.narration?.voice || "edge-en-ava",
     speed: slide.narration?.speed ?? 1,
     transition: slide.transition || "fade",
     animation: slide.animation || "none",
@@ -123,8 +142,11 @@ export default function ProjectPage() {
   const [success, setSuccess] = useState("");
   const [draft, setDraft] = useState<Draft | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Slide | null>(null);
+  const [deleteProjectOpen, setDeleteProjectOpen] = useState(false);
   const [editProjectOpen, setEditProjectOpen] = useState(false);
   const [projectFormError, setProjectFormError] = useState("");
+  /** Index into selected.images for full-size view of the fitted/export image */
+  const [viewImageIndex, setViewImageIndex] = useState<number | null>(null);
   const draftRef = useRef<Draft | null>(null);
   const slidesRef = useRef<Slide[]>([]);
   const savingRef = useRef(false);
@@ -133,10 +155,15 @@ export default function ProjectPage() {
     draftRef.current = draft;
   }, [draft]);
 
+  useEffect(() => {
+    setViewImageIndex(null);
+  }, [selectedId]);
+
   const projectQuery = useQuery({
     queryKey: ["project", projectId],
     queryFn: async () => (await api.get(`/projects/${projectId}`)).data as Project,
   });
+  const projectAspect = getAspectOption(projectQuery.data?.aspect_ratio);
 
   const updateProjectMutation = useMutation({
     mutationFn: async (values: ProjectFormValues) => {
@@ -144,6 +171,7 @@ export default function ProjectPage() {
         title: values.title,
         description: values.description || null,
         status: values.status,
+        aspect_ratio: values.aspect_ratio,
       });
       return data as Project;
     },
@@ -200,17 +228,17 @@ export default function ProjectPage() {
   const deepgramAvailable = providersQuery.data?.deepgram_available ?? false;
 
   const [languageFilter, setLanguageFilter] = useState<string>("en");
-  // all | deepgram | edge
-  const [engineFilter, setEngineFilter] = useState<string>("all");
+  // all | deepgram | edge — default Edge free TTS
+  const [engineFilter, setEngineFilter] = useState<string>("edge");
 
-  // Keep language filter in sync with selected slide voice
+  // Keep language/engine filters in sync with selected slide voice
   useEffect(() => {
     if (!draft || allVoices.length === 0) return;
     const lang = languageForVoice(draft.voice, allVoices);
     setLanguageFilter(lang);
     const v = allVoices.find((x) => x.id === draft.voice);
     if (v?.provider === "deepgram") setEngineFilter("deepgram");
-    else if (v?.provider === "edge") setEngineFilter((prev) => (prev === "deepgram" ? "edge" : prev));
+    else if (v?.provider === "edge") setEngineFilter("edge");
   }, [draft?.slideId, draft?.voice, allVoices]);
 
   const voicesForLanguage = useMemo(() => {
@@ -332,18 +360,109 @@ export default function ProjectPage() {
     onError: (e) => setError(errMessage(e)),
   });
 
-  const uploadMutation = useMutation({
+  function prepareImages(fileList: File[]): File[] {
+    if (!fileList.length) throw new Error("No files selected");
+    // Server scales + pads to project canvas (no crop; full image kept)
+    const allowed = new Set(["image/png", "image/jpeg", "image/jpg", "image/webp"]);
+    const ok = fileList.filter(
+      (f) => allowed.has(f.type.toLowerCase()) || /\.(png|jpe?g|webp)$/i.test(f.name),
+    );
+    if (!ok.length) throw new Error("Use PNG, JPEG, or WebP images");
+    return ok;
+  }
+
+  const createSlideMutation = useMutation({
+    mutationFn: async () => {
+      await saveDraftIfNeeded(draftRef.current);
+      const { data } = await api.post(`/projects/${projectId}/slides/create`, {});
+      return data as Slide;
+    },
+    onSuccess: (slide) => {
+      qc.invalidateQueries({ queryKey: ["slides", projectId] });
+      qc.invalidateQueries({ queryKey: ["project", projectId] });
+      setSelectedId(slide.id);
+      setSuccess("Slide created — add images to it");
+    },
+    onError: (e) => setError(errMessage(e)),
+  });
+
+  /** Each file becomes its own slide */
+  const uploadAsSlidesMutation = useMutation({
     mutationFn: async (fileList: File[]) => {
-      if (!fileList.length) throw new Error("No files selected");
-      // Save current draft first
+      const ok = prepareImages(fileList);
       await saveDraftIfNeeded(draftRef.current);
       const form = new FormData();
-      fileList.forEach((f) => form.append("files", f));
+      ok.forEach((f) => form.append("files", f));
       await api.post(`/projects/${projectId}/slides`, form);
+      return ok.length;
+    },
+    onSuccess: (count) => {
+      qc.invalidateQueries({ queryKey: ["slides", projectId] });
+      qc.invalidateQueries({ queryKey: ["project", projectId] });
+      const ar = projectAspect.id;
+      setSuccess(
+        `${count} new slide${count === 1 ? "" : "s"} created · resized to ${ar}`,
+      );
+    },
+    onError: (e) => setError(errMessage(e)),
+  });
+
+  /** Add images onto the currently selected slide */
+  const addImagesMutation = useMutation({
+    mutationFn: async (fileList: File[]) => {
+      if (!selectedId) throw new Error("Select a slide first");
+      const ok = prepareImages(fileList);
+      await saveDraftIfNeeded(draftRef.current);
+      const form = new FormData();
+      ok.forEach((f) => form.append("files", f));
+      const { data } = await api.post(`/slides/${selectedId}/images`, form);
+      return data as Slide;
+    },
+    onSuccess: (slide) => {
+      qc.invalidateQueries({ queryKey: ["slides", projectId] });
+      setSuccess(
+        `Added images · slide now has ${slide.image_count ?? 0} · resized to ${projectAspect.id}`,
+      );
+    },
+    onError: (e) => setError(errMessage(e)),
+  });
+
+  const removeImageMutation = useMutation({
+    mutationFn: async (imageIndex: number) => {
+      if (!selectedId) throw new Error("No slide selected");
+      const { data } = await api.delete(`/slides/${selectedId}/images/${imageIndex}`);
+      return data as Slide;
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["slides", projectId] });
-      setSuccess("Images uploaded");
+      setSuccess("Image removed from slide");
+    },
+    onError: (e) => setError(errMessage(e)),
+  });
+
+  const updateImageDurationMutation = useMutation({
+    mutationFn: async ({ index, durationMs }: { index: number; durationMs: number }) => {
+      if (!selectedId) throw new Error("No slide selected");
+      const { data } = await api.patch(`/slides/${selectedId}/images/${index}`, {
+        duration_ms: durationMs,
+      });
+      return data as Slide;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["slides", projectId] });
+    },
+    onError: (e) => setError(errMessage(e)),
+  });
+
+  const distributeDurationsMutation = useMutation({
+    mutationFn: async () => {
+      if (!selectedId) throw new Error("No slide selected");
+      const { data } = await api.post(`/slides/${selectedId}/images/distribute`);
+      return data as Slide;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["slides", projectId] });
+      setSuccess("Image times split evenly across the slide");
     },
     onError: (e) => setError(errMessage(e)),
   });
@@ -503,11 +622,11 @@ export default function ProjectPage() {
     <Stack spacing={3}>
       <PageHeader
         title={projectQuery.data?.title || "Project"}
-        subtitle={`${slides.length} slides · ${(totalDuration / 1000).toFixed(1)}s total · ${readyCount} voices ready${
+        subtitle={`${projectAspect.id} · ${slides.length} slides · ${(totalDuration / 1000).toFixed(1)}s total · ${readyCount} voices ready${
           busyTtsCount ? ` · ${busyTtsCount} generating` : ""
         }${dirty ? " · unsaved changes" : ""}`}
         crumbs={[
-          { label: "Dashboard", to: "/" },
+          { label: "Dashboard", to: "/dashboard" },
           { label: "Projects", to: "/projects" },
           { label: projectQuery.data?.title || "Editor" },
         ]}
@@ -537,15 +656,7 @@ export default function ProjectPage() {
               variant="outlined"
               startIcon={<DeleteOutlineIcon />}
               disabled={deleteProjectMutation.isPending}
-              onClick={() => {
-                if (
-                  window.confirm(
-                    `Delete project “${projectQuery.data?.title || "this project"}”? This cannot be undone.`
-                  )
-                ) {
-                  deleteProjectMutation.mutate();
-                }
-              }}
+              onClick={() => setDeleteProjectOpen(true)}
             >
               Delete
             </Button>
@@ -584,44 +695,67 @@ export default function ProjectPage() {
 
       <Card>
         <CardContent>
-          <Stack direction={{ xs: "column", sm: "row" }} spacing={2} alignItems="center">
-            <Button
-              variant="contained"
-              component="label"
-              startIcon={<CloudUploadIcon />}
-              disabled={uploadMutation.isPending}
-            >
-              Upload images
-              <input
-                hidden
-                type="file"
-                accept="image/png,image/jpeg,image/webp"
-                multiple
-                onChange={(e) => {
-                  const picked = e.target.files ? Array.from(e.target.files) : [];
-                  e.target.value = "";
-                  if (picked.length) uploadMutation.mutate(picked);
-                }}
+          <Stack spacing={1.5}>
+            <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
+              <Chip
+                size="small"
+                color="primary"
+                label={`${projectAspect.label} · ${projectAspect.width}×${projectAspect.height}`}
               />
-            </Button>
-            <Button
-              variant="outlined"
-              startIcon={<RecordVoiceOverIcon />}
-              onClick={() => ttsBatch.mutate()}
-              disabled={ttsBatch.isPending || slides.length === 0 || busyTtsCount > 0}
-            >
-              Generate all voices
-            </Button>
-            <Button
-              color="error"
-              variant="outlined"
-              startIcon={<StopIcon />}
-              disabled={stopJobsMutation.isPending || busyTtsCount === 0}
-              onClick={() => stopJobsMutation.mutate()}
-            >
-              {stopJobsMutation.isPending ? "Stopping…" : "Stop generating"}
-            </Button>
-            {uploadMutation.isPending && <CircularProgress size={22} />}
+              <Typography variant="body2" color="text.secondary">
+                Any size is fine — images are scaled to fit {projectAspect.id} (
+                {projectAspect.width}×{projectAspect.height}) with padding (no crop).
+              </Typography>
+            </Stack>
+            <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5} alignItems="center" flexWrap="wrap" useFlexGap>
+              <Button
+                variant="contained"
+                startIcon={<NoteAddIcon />}
+                disabled={createSlideMutation.isPending}
+                onClick={() => createSlideMutation.mutate()}
+              >
+                {createSlideMutation.isPending ? "Creating…" : "Create slide"}
+              </Button>
+              <Button
+                variant="outlined"
+                component="label"
+                startIcon={<CloudUploadIcon />}
+                disabled={uploadAsSlidesMutation.isPending}
+              >
+                Upload as new slides
+                <input
+                  hidden
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  multiple
+                  onChange={(e) => {
+                    const picked = e.target.files ? Array.from(e.target.files) : [];
+                    e.target.value = "";
+                    if (picked.length) uploadAsSlidesMutation.mutate(picked);
+                  }}
+                />
+              </Button>
+              <Button
+                variant="outlined"
+                startIcon={<RecordVoiceOverIcon />}
+                onClick={() => ttsBatch.mutate()}
+                disabled={ttsBatch.isPending || slides.length === 0 || busyTtsCount > 0}
+              >
+                Generate all voices
+              </Button>
+              <Button
+                color="error"
+                variant="outlined"
+                startIcon={<StopIcon />}
+                disabled={stopJobsMutation.isPending || busyTtsCount === 0}
+                onClick={() => stopJobsMutation.mutate()}
+              >
+                {stopJobsMutation.isPending ? "Stopping…" : "Stop generating"}
+              </Button>
+              {(uploadAsSlidesMutation.isPending || createSlideMutation.isPending) && (
+                <CircularProgress size={22} />
+              )}
+            </Stack>
           </Stack>
         </CardContent>
       </Card>
@@ -658,29 +792,195 @@ export default function ProjectPage() {
             {editorReady && selected && draft && (
               // key forces a clean editor remount when the slide changes
               <Stack spacing={2} key={selected.id}>
-                <Box
-                  component="img"
-                  src={mediaUrl(selected.image_url)}
-                  alt={`Slide ${selected.order_index + 1}`}
-                  sx={{
-                    width: "100%",
-                    maxHeight: 320,
-                    objectFit: "contain",
-                    bgcolor: "#0f172a",
-                    borderRadius: 2,
-                  }}
-                />
+                {(selected.images?.length ?? 0) > 0 ? (
+                  <Box
+                    sx={{
+                      display: "grid",
+                      gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))",
+                      gap: 1,
+                    }}
+                  >
+                    {(selected.images || []).map((img) => (
+                      <Box
+                        key={`${img.image_key}-${img.index}`}
+                        sx={{
+                          position: "relative",
+                          borderRadius: 2,
+                          overflow: "hidden",
+                          bgcolor: "#0f172a",
+                          border: "1px solid",
+                          borderColor: "divider",
+                          "&:hover .img-actions": { opacity: 1 },
+                        }}
+                      >
+                        <Box
+                          component="img"
+                          src={mediaUrl(img.image_url)}
+                          alt={`Image ${img.index + 1}`}
+                          onClick={() => setViewImageIndex(img.index)}
+                          sx={{
+                            width: "100%",
+                            height: 120,
+                            objectFit: "contain",
+                            display: "block",
+                            cursor: "zoom-in",
+                          }}
+                        />
+                        <Stack
+                          direction="row"
+                          justifyContent="space-between"
+                          alignItems="center"
+                          className="img-actions"
+                          sx={{ px: 0.5, py: 0.25, bgcolor: "rgba(0,0,0,0.6)" }}
+                        >
+                          <Typography variant="caption" color="#fff" sx={{ pl: 0.5 }}>
+                            {img.index + 1}/{(selected.images || []).length}
+                            {img.duration_ms != null
+                              ? ` · ${(img.duration_ms / 1000).toFixed(1)}s`
+                              : ""}
+                          </Typography>
+                          <Stack direction="row" spacing={0}>
+                            <Tooltip title="View resized image">
+                              <IconButton
+                                size="small"
+                                sx={{ color: "#fff" }}
+                                onClick={() => setViewImageIndex(img.index)}
+                                aria-label="View image"
+                              >
+                                <VisibilityIcon fontSize="small" />
+                              </IconButton>
+                            </Tooltip>
+                            <Tooltip title="Remove image">
+                              <IconButton
+                                size="small"
+                                sx={{ color: "#fff" }}
+                                disabled={removeImageMutation.isPending}
+                                onClick={() => removeImageMutation.mutate(img.index)}
+                                aria-label="Remove image"
+                              >
+                                <DeleteOutlineIcon fontSize="small" />
+                              </IconButton>
+                            </Tooltip>
+                          </Stack>
+                        </Stack>
+                        {(selected.images?.length ?? 0) > 1 && (
+                          <Box sx={{ px: 0.75, py: 0.75, bgcolor: "background.paper" }}>
+                            <TextField
+                              size="small"
+                              type="number"
+                              label="Seconds"
+                              fullWidth
+                              defaultValue={
+                                img.duration_ms != null
+                                  ? Math.round((img.duration_ms / 1000) * 10) / 10
+                                  : ""
+                              }
+                              key={`${selected.id}-${img.index}-${img.duration_ms}`}
+                              inputProps={{ min: 0.1, max: 120, step: 0.1 }}
+                              onBlur={(e) => {
+                                const sec = parseFloat(e.target.value);
+                                if (!Number.isFinite(sec) || sec < 0.1) return;
+                                const ms = Math.round(sec * 1000);
+                                if (ms === img.duration_ms) return;
+                                updateImageDurationMutation.mutate({
+                                  index: img.index,
+                                  durationMs: ms,
+                                });
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  (e.target as HTMLInputElement).blur();
+                                }
+                              }}
+                            />
+                          </Box>
+                        )}
+                      </Box>
+                    ))}
+                  </Box>
+                ) : (
+                  <Box
+                    sx={{
+                      width: "100%",
+                      minHeight: 160,
+                      borderRadius: 2,
+                      border: "2px dashed",
+                      borderColor: "divider",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      bgcolor: "action.hover",
+                      px: 2,
+                    }}
+                  >
+                    <Typography color="text.secondary" align="center">
+                      No images yet — add images (auto-resized to {projectAspect.id}).
+                    </Typography>
+                  </Box>
+                )}
+
                 <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
                   <Chip label={`Slide ${selected.order_index + 1}`} color="primary" size="small" />
-                  <Chip label={`${(selected.effective_duration_ms / 1000).toFixed(1)}s`} />
-                  <Chip label={selected.narration?.tts_status || "missing"} />
+                  <Chip
+                    label={`${selected.image_count ?? selected.images?.length ?? 0} image${
+                      (selected.image_count ?? selected.images?.length ?? 0) === 1 ? "" : "s"
+                    }`}
+                    size="small"
+                  />
+                  <Chip label={`${(selected.effective_duration_ms / 1000).toFixed(1)}s`} size="small" />
+                  <Chip label={selected.narration?.tts_status || "missing"} size="small" />
                   {dirty && <Chip label="Unsaved" color="warning" size="small" />}
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    component="label"
+                    startIcon={<AddPhotoAlternateIcon />}
+                    disabled={addImagesMutation.isPending}
+                  >
+                    {addImagesMutation.isPending ? "Adding…" : "Add images to slide"}
+                    <input
+                      hidden
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp"
+                      multiple
+                      onChange={(e) => {
+                        const picked = e.target.files ? Array.from(e.target.files) : [];
+                        e.target.value = "";
+                        if (picked.length) addImagesMutation.mutate(picked);
+                      }}
+                    />
+                  </Button>
                   {selected.narration?.tts_error && (
                     <Typography color="error" variant="caption">
                       {selected.narration.tts_error}
                     </Typography>
                   )}
                 </Stack>
+                {(selected.image_count ?? 0) > 1 && (
+                  <Stack spacing={0.5}>
+                    <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
+                      <Typography variant="caption" color="text.secondary">
+                        Set how long each image shows. Times are scaled to match narration length on
+                        export.
+                      </Typography>
+                      <Button
+                        size="small"
+                        variant="text"
+                        disabled={distributeDurationsMutation.isPending}
+                        onClick={() => distributeDurationsMutation.mutate()}
+                      >
+                        Split evenly
+                      </Button>
+                    </Stack>
+                    <Typography variant="caption" color="text.secondary">
+                      Image times sum:{" "}
+                      {(
+                        (selected.images || []).reduce((a, im) => a + (im.duration_ms || 0), 0) / 1000
+                      ).toFixed(1)}
+                      s · narration {(selected.effective_duration_ms / 1000).toFixed(1)}s
+                    </Typography>
+                  </Stack>
+                )}
                 <TextField
                   label={`Narration script (slide ${selected.order_index + 1})`}
                   value={draft.text}
@@ -929,28 +1229,201 @@ export default function ProjectPage() {
         </Card>
       </Stack>
 
-      <Dialog open={!!deleteTarget} onClose={() => setDeleteTarget(null)}>
-        <DialogTitle>Delete slide?</DialogTitle>
-        <DialogContent>
-          <DialogContentText>
-            This permanently removes the image and narration
-            {deleteTarget ? ` for slide ${(deleteTarget.order_index ?? 0) + 1}` : ""}. This cannot be undone.
-          </DialogContentText>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setDeleteTarget(null)}>Cancel</Button>
-          <Button
-            color="error"
-            variant="contained"
-            disabled={deleteMutation.isPending}
-            onClick={() => {
-              if (deleteTarget) deleteMutation.mutate(deleteTarget.id);
+      {/* Full-size view of auto-fitted / export image */}
+      {(() => {
+        const images = selected?.images || [];
+        const idx = viewImageIndex;
+        const current = idx != null ? images.find((i) => i.index === idx) || images[idx] : null;
+        const ordered = images;
+        const pos = current ? ordered.findIndex((i) => i.index === current.index) : -1;
+        const canPrev = pos > 0;
+        const canNext = pos >= 0 && pos < ordered.length - 1;
+        const open = !!current && viewImageIndex != null;
+        const src = mediaUrl(current?.image_url);
+
+        return (
+          <Dialog
+            open={open}
+            onClose={() => setViewImageIndex(null)}
+            maxWidth="lg"
+            fullWidth
+            PaperProps={{
+              sx: {
+                bgcolor: "#0B1220",
+                backgroundImage: "none",
+                border: "1px solid",
+                borderColor: "divider",
+              },
             }}
           >
-            {deleteMutation.isPending ? "Deleting…" : "Delete"}
-          </Button>
-        </DialogActions>
-      </Dialog>
+            <DialogTitle
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 1,
+                color: "#F8FAFC",
+                pr: 1,
+              }}
+            >
+              <Box>
+                <Typography variant="h6" fontWeight={700} component="span">
+                  Resized image
+                </Typography>
+                <Typography variant="body2" color="rgba(248,250,252,0.65)" display="block">
+                  Slide {(selected?.order_index ?? 0) + 1}
+                  {current ? ` · ${current.index + 1} of ${ordered.length}` : ""}
+                  {" · "}
+                  canvas {projectAspect.id} ({projectAspect.width}×{projectAspect.height})
+                </Typography>
+              </Box>
+              <Stack direction="row" spacing={0.5} alignItems="center">
+                {src && (
+                  <Tooltip title="Open in new tab">
+                    <IconButton
+                      size="small"
+                      sx={{ color: "#F8FAFC" }}
+                      onClick={() => window.open(src, "_blank", "noopener,noreferrer")}
+                    >
+                      <OpenInNewIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                )}
+                <IconButton
+                  size="small"
+                  sx={{ color: "#F8FAFC" }}
+                  onClick={() => setViewImageIndex(null)}
+                  aria-label="Close"
+                >
+                  <CloseIcon />
+                </IconButton>
+              </Stack>
+            </DialogTitle>
+            <DialogContent sx={{ pt: 0 }}>
+              <Box
+                sx={{
+                  position: "relative",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  minHeight: { xs: 280, sm: 420 },
+                  bgcolor: "#020617",
+                  borderRadius: 2,
+                  border: "1px solid",
+                  borderColor: "rgba(148,163,184,0.2)",
+                  overflow: "hidden",
+                }}
+              >
+                {/* Aspect-ratio frame guide */}
+                <Box
+                  sx={{
+                    position: "absolute",
+                    inset: 12,
+                    border: "1px dashed",
+                    borderColor: "rgba(167,139,250,0.35)",
+                    borderRadius: 1,
+                    pointerEvents: "none",
+                    zIndex: 1,
+                  }}
+                />
+                {src ? (
+                  <Box
+                    component="img"
+                    src={src}
+                    alt={`Fitted slide image ${current?.index != null ? current.index + 1 : ""}`}
+                    sx={{
+                      maxWidth: "100%",
+                      maxHeight: { xs: "55vh", sm: "70vh" },
+                      objectFit: "contain",
+                      display: "block",
+                      zIndex: 0,
+                    }}
+                  />
+                ) : (
+                  <Typography color="text.secondary">Image unavailable</Typography>
+                )}
+                {canPrev && (
+                  <IconButton
+                    onClick={() => setViewImageIndex(ordered[pos - 1].index)}
+                    sx={{
+                      position: "absolute",
+                      left: 8,
+                      top: "50%",
+                      transform: "translateY(-50%)",
+                      bgcolor: "rgba(15,23,42,0.75)",
+                      color: "#fff",
+                      zIndex: 2,
+                      "&:hover": { bgcolor: "rgba(15,23,42,0.95)" },
+                    }}
+                    aria-label="Previous image"
+                  >
+                    <ChevronLeftIcon />
+                  </IconButton>
+                )}
+                {canNext && (
+                  <IconButton
+                    onClick={() => setViewImageIndex(ordered[pos + 1].index)}
+                    sx={{
+                      position: "absolute",
+                      right: 8,
+                      top: "50%",
+                      transform: "translateY(-50%)",
+                      bgcolor: "rgba(15,23,42,0.75)",
+                      color: "#fff",
+                      zIndex: 2,
+                      "&:hover": { bgcolor: "rgba(15,23,42,0.95)" },
+                    }}
+                    aria-label="Next image"
+                  >
+                    <ChevronRightIcon />
+                  </IconButton>
+                )}
+              </Box>
+              <Typography variant="caption" color="rgba(248,250,252,0.55)" sx={{ mt: 1.5, display: "block" }}>
+                Full image is kept — scaled to fit {projectAspect.id} with black padding if the original
+                aspect differs (no cropping).
+              </Typography>
+            </DialogContent>
+            <DialogActions sx={{ px: 3, pb: 2 }}>
+              <Button onClick={() => setViewImageIndex(null)} variant="contained">
+                Close
+              </Button>
+            </DialogActions>
+          </Dialog>
+        );
+      })()}
+
+      <ConfirmDialog
+        open={!!deleteTarget}
+        title="Delete slide?"
+        description="This permanently removes the image(s) and narration for this slide. This cannot be undone."
+        highlight={
+          deleteTarget ? `Slide ${(deleteTarget.order_index ?? 0) + 1}` : undefined
+        }
+        confirmLabel="Delete slide"
+        loading={deleteMutation.isPending}
+        tone="danger"
+        onClose={() => {
+          if (!deleteMutation.isPending) setDeleteTarget(null);
+        }}
+        onConfirm={() => {
+          if (deleteTarget) deleteMutation.mutate(deleteTarget.id);
+        }}
+      />
+
+      <ConfirmDialog
+        open={deleteProjectOpen}
+        title="Delete project?"
+        description="This permanently removes the project, all slides, narration audio, and exported videos. This cannot be undone."
+        highlight={projectQuery.data?.title}
+        confirmLabel="Delete project"
+        loading={deleteProjectMutation.isPending}
+        tone="danger"
+        onClose={() => {
+          if (!deleteProjectMutation.isPending) setDeleteProjectOpen(false);
+        }}
+        onConfirm={() => deleteProjectMutation.mutate()}
+      />
 
       <ProjectFormDialog
         open={editProjectOpen}

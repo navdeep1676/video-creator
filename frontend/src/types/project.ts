@@ -6,6 +6,10 @@ export type Project = {
   storage_bytes: number;
   created_at: string;
   updated_at: string;
+  /** Locked at create: export frame; uploads are scaled+padded to this canvas */
+  aspect_ratio?: string;
+  canvas_width?: number;
+  canvas_height?: number;
   slide_count?: number;
   ready_audio_count?: number;
   video_job_count?: number;

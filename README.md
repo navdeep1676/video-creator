@@ -1,6 +1,6 @@
-# AI Learning Video Generator
+# Naratto
 
-Convert learning slides + narration scripts into professional educational MP4 videos.
+**Learning video studio** — convert slides + narration scripts into professional educational MP4 videos.
 
 **Stack:** React + TypeScript + MUI · FastAPI · PostgreSQL · Redis · Celery · FFmpeg · Deepgram TTS
 

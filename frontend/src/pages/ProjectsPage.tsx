@@ -23,6 +23,7 @@ import { api, errMessage } from "../api/client";
 import PageHeader from "../components/PageHeader";
 import ProjectCard from "../components/ProjectCard";
 import ProjectFormDialog, { type ProjectFormValues } from "../components/ProjectFormDialog";
+import ConfirmDialog from "../components/ConfirmDialog";
 import type { Project, ProjectListResponse } from "../types/project";
 
 export default function ProjectsPage() {
@@ -33,6 +34,7 @@ export default function ProjectsPage() {
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
   const [editProject, setEditProject] = useState<Project | null>(null);
+  const [deleteProject, setDeleteProject] = useState<Project | null>(null);
   const [formError, setFormError] = useState("");
   const [actionError, setActionError] = useState("");
 
@@ -60,6 +62,7 @@ export default function ProjectsPage() {
       const { data } = await api.post("/projects", {
         title: values.title,
         description: values.description || null,
+        aspect_ratio: values.aspect_ratio || "16:9",
       });
       return data as Project;
     },
@@ -78,6 +81,7 @@ export default function ProjectsPage() {
         title: values.title,
         description: values.description || null,
         status: values.status,
+        aspect_ratio: values.aspect_ratio,
       });
       return data as Project;
     },
@@ -97,6 +101,7 @@ export default function ProjectsPage() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["projects"] });
       qc.invalidateQueries({ queryKey: ["projects-summary"] });
+      setDeleteProject(null);
     },
     onError: (e) => setActionError(errMessage(e)),
   });
@@ -120,8 +125,8 @@ export default function ProjectsPage() {
     <Stack spacing={3}>
       <PageHeader
         title="Projects"
-        subtitle="Create, edit, archive, and manage all learning video projects."
-        crumbs={[{ label: "Dashboard", to: "/" }, { label: "Projects" }]}
+        subtitle="Create, edit, archive, and manage all Naratto learning video projects."
+        crumbs={[{ label: "Dashboard", to: "/dashboard" }, { label: "Projects" }]}
         actions={
           <Button variant="contained" startIcon={<AddIcon />} onClick={() => setCreateOpen(true)}>
             New project
@@ -129,8 +134,14 @@ export default function ProjectsPage() {
         }
       />
 
-      <Card sx={{ border: "1px solid", borderColor: "divider" }}>
-        <CardContent>
+      <Card
+        sx={{
+          border: "1px solid",
+          borderColor: "divider",
+          background: "linear-gradient(180deg, rgba(255,255,255,0.95) 0%, #fff 100%)",
+        }}
+      >
+        <CardContent sx={{ py: 2, "&:last-child": { pb: 2 } }}>
           <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
             <TextField
               fullWidth
@@ -209,11 +220,7 @@ export default function ProjectsPage() {
                   setFormError("");
                   setEditProject(proj);
                 }}
-                onDelete={(proj) => {
-                  if (window.confirm(`Delete project “${proj.title}”? This cannot be undone.`)) {
-                    deleteMutation.mutate(proj.id);
-                  }
-                }}
+                onDelete={(proj) => setDeleteProject(proj)}
                 onToggleArchive={(proj) => archiveMutation.mutate(proj)}
               />
             ))}
@@ -250,6 +257,22 @@ export default function ProjectsPage() {
           if (!editProject) return;
           setFormError("");
           updateMutation.mutate({ id: editProject.id, values });
+        }}
+      />
+
+      <ConfirmDialog
+        open={!!deleteProject}
+        title="Delete project?"
+        description="This permanently removes the project, all slides, narration audio, and exported videos. This cannot be undone."
+        highlight={deleteProject?.title}
+        confirmLabel="Delete project"
+        loading={deleteMutation.isPending}
+        tone="danger"
+        onClose={() => {
+          if (!deleteMutation.isPending) setDeleteProject(null);
+        }}
+        onConfirm={() => {
+          if (deleteProject) deleteMutation.mutate(deleteProject.id);
         }}
       />
     </Stack>

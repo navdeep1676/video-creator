@@ -165,7 +165,7 @@ async def _edge_tts_async(
 def generate_edge_speech_mp3(
     text: str,
     out_path: Path,
-    voice: str = "aura-2-thalia-en",
+    voice: str = "edge-en-ava",
     speed: float = 1.0,
 ) -> int:
     """Natural neural TTS via Microsoft Edge (free, multi-language)."""
@@ -184,7 +184,7 @@ def generate_edge_speech_mp3(
 def generate_espeak_speech_mp3(
     text: str,
     out_path: Path,
-    voice: str = "aura-2-thalia-en",
+    voice: str = "edge-en-ava",
     speed: float = 1.0,
 ) -> int:
     """Offline robotic fallback when network TTS is unavailable."""
@@ -293,7 +293,7 @@ def generate_free_speech_mp3(
     text: str,
     out_path: Path,
     speed: float = 1.0,
-    voice: str = "aura-2-thalia-en",
+    voice: str = "edge-en-ava",
 ) -> int:
     """Natural free multi-language TTS (Edge) with timed subtitle cues."""
     try:

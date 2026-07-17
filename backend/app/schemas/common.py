@@ -48,15 +48,24 @@ class ChangePasswordRequest(BaseModel):
     new_password: str = Field(min_length=8, max_length=128)
 
 
+class UpdateProfileRequest(BaseModel):
+    display_name: str | None = Field(default=None, min_length=1, max_length=120)
+    email: EmailStr | None = None
+
+
 class ProjectCreate(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     description: str | None = None
+    # Locked at create: uploads + export use this frame
+    aspect_ratio: str = Field(default="16:9", pattern=r"^(16:9|9:16|1:1|4:5)$")
 
 
 class ProjectUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=200)
     description: str | None = None
     status: str | None = None
+    # Only allowed when the project has no slides yet
+    aspect_ratio: str | None = Field(default=None, pattern=r"^(16:9|9:16|1:1|4:5)$")
 
 
 class ProjectOut(ORMModel):
@@ -67,6 +76,9 @@ class ProjectOut(ORMModel):
     storage_bytes: int
     created_at: Any
     updated_at: Any
+    aspect_ratio: str = "16:9"
+    canvas_width: int = 1920
+    canvas_height: int = 1080
     # Optional enrichment for list/dashboard (0 when not computed)
     slide_count: int = 0
     ready_audio_count: int = 0
@@ -86,12 +98,22 @@ class NarrationOut(ORMModel):
     audio_duration_ms: int | None
 
 
+class SlideImageOut(BaseModel):
+    index: int
+    image_key: str
+    image_url: str | None = None
+    # Per-image hold time (ms). null = equal share of slide duration at render.
+    duration_ms: int | None = None
+
+
 class SlideOut(ORMModel):
     id: UUID
     project_id: UUID
     order_index: int
-    image_key: str
+    image_key: str | None = None
     image_url: str | None = None
+    images: list[SlideImageOut] = Field(default_factory=list)
+    image_count: int = 0
     duration_ms: int
     effective_duration_ms: int
     transition: str
@@ -106,6 +128,27 @@ class SlideUpdate(BaseModel):
     duration_ms: int | None = Field(default=None, ge=500, le=120_000)
     transition: str | None = None
     animation: str | None = None
+
+
+class CreateSlideRequest(BaseModel):
+    """Create an empty slide shell; attach images afterward."""
+    transition: str = "fade"
+    animation: str = "none"
+
+
+class SlideImageUpdate(BaseModel):
+    """Update a single image on a slide (currently duration)."""
+    duration_ms: int | None = Field(default=None, ge=100, le=120_000)
+
+
+class SlideImagesDurationsUpdate(BaseModel):
+    """Set durations for multiple images by index."""
+    items: list[dict]  # [{index: int, duration_ms: int|null}, ...]
+
+
+class ReorderImagesRequest(BaseModel):
+    """New order as zero-based indices into the current images list."""
+    image_indices: list[int]
 
 
 class ReorderRequest(BaseModel):
@@ -175,8 +218,59 @@ class ApplyLanguageRequest(BaseModel):
 class VideoRenderRequest(BaseModel):
     project_id: UUID
     include_subtitles: bool = True
+    # youtube | shorts | auto — platform-safe caption margins
+    caption_style: str = Field(default="auto", pattern=r"^(auto|youtube|shorts)$")
+    # Optional; when omitted, project.settings.aspect_ratio is used
+    aspect_ratio: str | None = Field(default=None, pattern=r"^(16:9|9:16|1:1|4:5)$")
+    # full = 1080-class; draft = ~720p faster preview encode
+    quality: str = Field(default="full", pattern=r"^(full|draft)$")
     background_music_asset_id: UUID | None = None
     background_music_volume: float = Field(default=0.15, ge=0.0, le=1.0)
+
+
+class AspectRatioOut(BaseModel):
+    id: str
+    label: str
+    description: str
+    width: int
+    height: int
+    category: str
+
+
+class CaptionStyleOut(BaseModel):
+    id: str
+    label: str
+    description: str
+    margin_v_ratio: float
+    margin_h_ratio: float
+    font_scale: float
+    max_chars: int
+    max_words: int
+    best_for: list[str]
+
+
+class ExportCheckIssue(BaseModel):
+    slide_id: UUID | None = None
+    order: int | None = None
+    message: str
+
+
+class ExportCheckItem(BaseModel):
+    id: str
+    ok: bool
+    label: str
+    severity: str = "error"  # error | warning | info
+    count: int = 0
+    issues: list[ExportCheckIssue] = Field(default_factory=list)
+
+
+class ExportReadinessOut(BaseModel):
+    ready: bool
+    project_id: UUID
+    slide_count: int
+    summary: dict[str, int]
+    checks: list[ExportCheckItem]
+    recommended_caption_style: str = "auto"
 
 
 class VideoJobOut(ORMModel):
@@ -188,6 +282,11 @@ class VideoJobOut(ORMModel):
     video_url: str | None = None
     thumbnail_url: str | None = None
     duration_ms: int | None
+    aspect_ratio: str | None = None
+    width: int | None = None
+    height: int | None = None
+    quality: str | None = None
+    caption_style: str | None = None
     error_code: str | None
     error_message: str | None
     created_at: Any

@@ -78,3 +78,89 @@ def validate_video_bytes(data: bytes, filename: str) -> str:
     if len(data) > 1024 and ext in ALLOWED_VIDEO_EXT:
         return ext
     raise ValueError("Video content does not look like a supported media file")
+
+
+def read_image_size(data: bytes) -> tuple[int, int]:
+    """
+    Return (width, height) for PNG / JPEG / WebP without external deps.
+    Raises ValueError if dimensions cannot be determined.
+    """
+    if not data or len(data) < 24:
+        raise ValueError("Image file is empty or too small to read dimensions")
+
+    # PNG: IHDR chunk
+    if data.startswith(PNG_SIG) and len(data) >= 24:
+        w = int.from_bytes(data[16:20], "big")
+        h = int.from_bytes(data[20:24], "big")
+        if w > 0 and h > 0:
+            return w, h
+
+    # JPEG: scan SOF0–SOF3 / SOF5–SOF7 / SOF9–SOF11 / SOF13–SOF15
+    if data.startswith(JPEG_SIG):
+        i = 2
+        n = len(data)
+        while i + 9 < n:
+            if data[i] != 0xFF:
+                i += 1
+                continue
+            # skip fill bytes
+            while i < n and data[i] == 0xFF:
+                i += 1
+            if i >= n:
+                break
+            marker = data[i]
+            i += 1
+            # standalone markers without length
+            if marker in {0xD8, 0xD9} or (0xD0 <= marker <= 0xD7):
+                continue
+            if i + 1 >= n:
+                break
+            seg_len = int.from_bytes(data[i : i + 2], "big")
+            if seg_len < 2 or i + seg_len > n:
+                break
+            # Start of Frame with dimensions
+            if marker in {
+                0xC0,
+                0xC1,
+                0xC2,
+                0xC3,
+                0xC5,
+                0xC6,
+                0xC7,
+                0xC9,
+                0xCA,
+                0xCB,
+                0xCD,
+                0xCE,
+                0xCF,
+            }:
+                # [len:2][precision:1][height:2][width:2]
+                h = int.from_bytes(data[i + 3 : i + 5], "big")
+                w = int.from_bytes(data[i + 5 : i + 7], "big")
+                if w > 0 and h > 0:
+                    return w, h
+            i += seg_len
+
+    # WebP (RIFF)
+    if len(data) > 30 and data[:4] == WEBP_RIFF and data[8:12] == WEBP_WEBP:
+        chunk = data[12:16]
+        if chunk == b"VP8X" and len(data) >= 30:
+            # canvas size is 24-bit little-endian minus 1
+            w = 1 + int.from_bytes(data[24:27], "little")
+            h = 1 + int.from_bytes(data[27:30], "little")
+            if w > 0 and h > 0:
+                return w, h
+        if chunk == b"VP8 " and len(data) >= 30:
+            # lossy: width/height in frame header (14-bit little-endian)
+            w = int.from_bytes(data[26:28], "little") & 0x3FFF
+            h = int.from_bytes(data[28:30], "little") & 0x3FFF
+            if w > 0 and h > 0:
+                return w, h
+        if chunk == b"VP8L" and len(data) >= 25:
+            bits = int.from_bytes(data[21:25], "little")
+            w = (bits & 0x3FFF) + 1
+            h = ((bits >> 14) & 0x3FFF) + 1
+            if w > 0 and h > 0:
+                return w, h
+
+    raise ValueError("Could not read image dimensions (use PNG, JPEG, or WebP)")

@@ -18,7 +18,9 @@ import MovieCreationIcon from "@mui/icons-material/MovieCreation";
 import CollectionsIcon from "@mui/icons-material/Collections";
 import RecordVoiceOverIcon from "@mui/icons-material/RecordVoiceOver";
 import { Link as RouterLink } from "react-router-dom";
+import { motion } from "framer-motion";
 import type { Project } from "../types/project";
+import { brandColors } from "../theme";
 
 function formatBytes(n: number): string {
   if (!n) return "0 B";
@@ -62,22 +64,43 @@ export default function ProjectCard({ project, onEdit, onDelete, onToggleArchive
 
   return (
     <Card
+      component={motion.div}
+      whileHover={{ y: -4, transition: { duration: 0.2 } }}
       sx={{
         height: "100%",
         display: "flex",
         flexDirection: "column",
-        opacity: project.status === "archived" ? 0.85 : 1,
-        border: "1px solid",
-        borderColor: "divider",
+        opacity: project.status === "archived" ? 0.88 : 1,
+        overflow: "hidden",
+        position: "relative",
+        "&:hover": {
+          boxShadow: "0 16px 40px rgba(109, 40, 217, 0.12)",
+          borderColor: "rgba(109, 40, 217, 0.22)",
+        },
       }}
     >
+      <Box
+        sx={{
+          height: 4,
+          background:
+            project.status === "archived"
+              ? "linear-gradient(90deg, #94A3B8, #CBD5E1)"
+              : `linear-gradient(90deg, ${brandColors.violet}, ${brandColors.cyan})`,
+        }}
+      />
       <CardContent
         component={RouterLink}
         to={`/projects/${project.id}`}
-        sx={{ flex: 1, textDecoration: "none", color: "inherit", "&:hover": { bgcolor: "action.hover" } }}
+        sx={{
+          flex: 1,
+          textDecoration: "none",
+          color: "inherit",
+          transition: "background 0.18s ease",
+          "&:hover": { bgcolor: "rgba(109, 40, 217, 0.02)" },
+        }}
       >
         <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={1}>
-          <Typography variant="h6" sx={{ lineHeight: 1.3 }}>
+          <Typography variant="h6" sx={{ lineHeight: 1.3, flex: 1, fontWeight: 700 }}>
             {project.title}
           </Typography>
           <Chip
@@ -85,6 +108,7 @@ export default function ProjectCard({ project, onEdit, onDelete, onToggleArchive
             label={project.status}
             color={project.status === "archived" ? "default" : "primary"}
             variant={project.status === "archived" ? "outlined" : "filled"}
+            sx={{ textTransform: "capitalize" }}
           />
         </Stack>
         <Typography
@@ -103,36 +127,31 @@ export default function ProjectCard({ project, onEdit, onDelete, onToggleArchive
           {project.description || "No description"}
         </Typography>
 
-        <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap sx={{ mb: 1.5 }}>
+        <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap sx={{ mb: 1.75 }}>
+          {project.aspect_ratio && (
+            <Chip size="small" label={project.aspect_ratio} color="secondary" variant="outlined" />
+          )}
           <Chip size="small" icon={<CollectionsIcon />} label={`${slides} slides`} variant="outlined" />
           <Chip size="small" icon={<RecordVoiceOverIcon />} label={`${ready} voices`} variant="outlined" />
           <Chip
             size="small"
             icon={<MovieCreationIcon />}
-            label={
-              project.last_render_status
-                ? `Render: ${project.last_render_status}`
-                : "No render yet"
-            }
+            label={project.last_render_status ? `Render: ${project.last_render_status}` : "No render yet"}
             color={statusColor(project.last_render_status)}
             variant="outlined"
           />
         </Stack>
 
         <Box>
-          <Stack direction="row" justifyContent="space-between" sx={{ mb: 0.5 }}>
-            <Typography variant="caption" color="text.secondary">
+          <Stack direction="row" justifyContent="space-between" sx={{ mb: 0.75 }}>
+            <Typography variant="caption" color="text.secondary" fontWeight={600}>
               Voice readiness
             </Typography>
-            <Typography variant="caption" color="text.secondary">
+            <Typography variant="caption" color="primary.main" fontWeight={700}>
               {voicePct}%
             </Typography>
           </Stack>
-          <LinearProgress
-            variant="determinate"
-            value={voicePct}
-            sx={{ height: 6, borderRadius: 3 }}
-          />
+          <LinearProgress variant="determinate" value={voicePct} />
         </Box>
 
         <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 2 }}>
@@ -140,18 +159,24 @@ export default function ProjectCard({ project, onEdit, onDelete, onToggleArchive
         </Typography>
       </CardContent>
 
-      <CardActions sx={{ px: 1.5, pb: 1.5, justifyContent: "flex-end" }}>
+      <CardActions
+        sx={{
+          px: 1.5,
+          pb: 1.5,
+          pt: 0,
+          justifyContent: "flex-end",
+          borderTop: "1px solid",
+          borderColor: "divider",
+          bgcolor: "rgba(248, 250, 252, 0.6)",
+        }}
+      >
         <Tooltip title="Edit">
           <IconButton size="small" onClick={() => onEdit(project)} aria-label="Edit project">
             <EditOutlinedIcon fontSize="small" />
           </IconButton>
         </Tooltip>
         <Tooltip title={project.status === "archived" ? "Restore to draft" : "Archive"}>
-          <IconButton
-            size="small"
-            onClick={() => onToggleArchive(project)}
-            aria-label="Archive project"
-          >
+          <IconButton size="small" onClick={() => onToggleArchive(project)} aria-label="Archive project">
             {project.status === "archived" ? (
               <UnarchiveOutlinedIcon fontSize="small" />
             ) : (

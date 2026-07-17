@@ -1,1 +1,1 @@
-"""AI Learning Video Generator backend."""
+"""Naratto backend — learning video studio."""

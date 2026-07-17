@@ -10,6 +10,7 @@ from app.db.models import Narration, Project, Slide, User, VideoJob
 from app.db.session import get_db
 from app.dependencies import get_current_user
 from app.schemas.common import ListResponse, ProjectCreate, ProjectOut, ProjectUpdate
+from app.services.aspect_ratios import project_aspect_ratio, resolve_aspect_ratio
 from app.utils.exceptions import AppError
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -75,7 +76,14 @@ def _project_stats(db: Session, project_ids: list[UUID]) -> dict[UUID, dict]:
 
 
 def _to_out(project: Project, stats: dict | None = None) -> ProjectOut:
-    base = ProjectOut.model_validate(project)
+    preset = project_aspect_ratio(project.settings)
+    base = ProjectOut.model_validate(project).model_copy(
+        update={
+            "aspect_ratio": preset.id,
+            "canvas_width": preset.width,
+            "canvas_height": preset.height,
+        }
+    )
     if stats:
         return base.model_copy(
             update={
@@ -94,7 +102,21 @@ def create_project(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> ProjectOut:
-    project = Project(owner_id=user.id, title=body.title.strip(), description=body.description, status="draft")
+    try:
+        preset = resolve_aspect_ratio(body.aspect_ratio)
+    except ValueError as e:
+        raise AppError("VALIDATION", str(e), 400) from e
+    project = Project(
+        owner_id=user.id,
+        title=body.title.strip(),
+        description=body.description,
+        status="draft",
+        settings={
+            "aspect_ratio": preset.id,
+            "canvas_width": preset.width,
+            "canvas_height": preset.height,
+        },
+    )
     db.add(project)
     db.commit()
     db.refresh(project)
@@ -194,6 +216,25 @@ def update_project(
         if body.status not in {"draft", "archived"}:
             raise AppError("VALIDATION", "status must be draft or archived", 400)
         project.status = body.status
+    if body.aspect_ratio is not None:
+        slide_count = db.scalar(
+            select(func.count(Slide.id)).where(Slide.project_id == project.id)
+        ) or 0
+        if slide_count > 0:
+            raise AppError(
+                "ASPECT_LOCKED",
+                "Aspect ratio cannot change after slides are uploaded. Create a new project for a different format.",
+                400,
+            )
+        try:
+            preset = resolve_aspect_ratio(body.aspect_ratio)
+        except ValueError as e:
+            raise AppError("VALIDATION", str(e), 400) from e
+        settings = dict(project.settings or {})
+        settings["aspect_ratio"] = preset.id
+        settings["canvas_width"] = preset.width
+        settings["canvas_height"] = preset.height
+        project.settings = settings
     db.add(project)
     db.commit()
     db.refresh(project)

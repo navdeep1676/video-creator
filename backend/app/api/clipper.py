@@ -235,6 +235,7 @@ def create_project_from_clips(
             project_id=project.id,
             order_index=order,
             image_key=dest_key,
+            image_keys=[{"key": dest_key, "duration_ms": settings.default_duration_ms}],
             duration_ms=settings.default_duration_ms,
             transition="fade",
             animation="ken_burns",

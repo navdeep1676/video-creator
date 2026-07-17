@@ -330,9 +330,15 @@ def get_voice(voice_id: str) -> dict[str, Any] | None:
 
 
 def default_voice_for_language(language: str, prefer_deepgram: bool = False) -> str:
+    """
+    Pick a sensible default voice for a language.
+
+    Default preference is **Edge** (free, always available). Deepgram only when
+    prefer_deepgram=True.
+    """
     voices = list_voices(language)
     if not voices:
-        return "aura-2-thalia-en"
+        return "edge-en-ava"
     if prefer_deepgram:
         for v in voices:
             if "deepgram" in (v.get("providers") or []) and v.get("gender") == "female":
@@ -340,6 +346,20 @@ def default_voice_for_language(language: str, prefer_deepgram: bool = False) -> 
         for v in voices:
             if "deepgram" in (v.get("providers") or []):
                 return v["id"]
+    # Prefer pure Edge catalog voices first (provider == edge)
+    for v in voices:
+        if v.get("provider") == "edge" and v.get("gender") == "female":
+            return v["id"]
+    for v in voices:
+        if v.get("provider") == "edge":
+            return v["id"]
+    # Fallback: any voice with edge support
+    for v in voices:
+        if "edge" in (v.get("providers") or []) and v.get("gender") == "female":
+            return v["id"]
+    for v in voices:
+        if "edge" in (v.get("providers") or []):
+            return v["id"]
     for v in voices:
         if v.get("gender") == "female":
             return v["id"]

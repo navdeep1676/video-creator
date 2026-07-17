@@ -312,14 +312,17 @@ def build_ass_from_timeline(
     play_res_y: int = 1080,
     font_size: int = 34,
     margin_v: int = 100,
+    margin_l: int = 80,
+    margin_r: int = 80,
+    outline: float = 0.0,
+    shadow: float = 0.0,
     seed: int | None = None,
     font_name: str | None = None,
 ) -> str:
     """
     ASS subtitles for burn-in:
     - multi-script fonts (Hindi/Devanagari etc. — not DejaVu)
-    - larger plain type (no outline/shadow)
-    - raised from bottom (higher MarginV)
+    - platform-safe margins (YouTube vs Shorts style packs)
     - each cue randomly white or yellow
     """
     rng = random.Random(seed)
@@ -327,12 +330,18 @@ def build_ass_from_timeline(
 
     # Default body font; per-cue overrides via \fn for non-Latin scripts
     default_font = font_name or "Noto Sans"
+    bord = max(0.0, float(outline))
+    shad = max(0.0, float(shadow))
+    ml = max(0, int(margin_l))
+    mr = max(0, int(margin_r))
+    mv = max(0, int(margin_v))
 
     def _style_line(name: str, colour: str) -> str:
-        # Outline=0, Shadow=0 → clean text without black box/outline
+        # Alignment 2 = bottom-center; MarginL/R/V define safe area
         return (
             f"Style: {name},{default_font},{font_size},{colour},&H000000FF,"
-            f"&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,2,80,80,{margin_v},1"
+            f"&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,{bord},{shad},2,"
+            f"{ml},{mr},{mv},1"
         )
 
     header = f"""[Script Info]
@@ -357,8 +366,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         style = rng.choice(["White", "Yellow"])
         text = _escape_ass_text(c["text"])
         font = pick_subtitle_font(c["text"])
-        # Force script-capable font; no outline/shadow on the glyph
-        text = f"{{\\fn{font}\\fs{font_size}\\bord0\\shad0}}{text}"
+        text = f"{{\\fn{font}\\fs{font_size}\\bord{bord}\\shad{shad}}}{text}"
         events.append(
             f"Dialogue: 0,{_ass_timestamp(c['start_s'])},{_ass_timestamp(c['end_s'])},"
             f"{style},,0,0,0,,{text}"
