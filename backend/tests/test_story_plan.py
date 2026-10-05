@@ -122,6 +122,17 @@ def _settings():
     return Settings(wan_budget_ratio=0.25, wan_clip_min_seconds=5, wan_clip_max_seconds=10)
 
 
+def test_each_scene_gets_its_own_music_prompt():
+    provider = ScriptedProvider([horror_payload()])
+    plan = plan_story(_project(), provider, _settings())
+    assert plan.music_prompt == "low strings, slow tempo, uneasy"
+    for scene in plan.scenes:
+        assert scene.music_prompt.strip()
+        assert "low strings, slow tempo, uneasy" in scene.music_prompt
+        assert scene.beat in scene.music_prompt
+        assert scene.narration in scene.music_prompt
+
+
 def test_horror_plan_has_beats_and_chain():
     provider = ScriptedProvider([horror_payload()])
     plan = plan_story(_project(), provider, _settings())

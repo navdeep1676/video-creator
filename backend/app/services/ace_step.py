@@ -43,17 +43,20 @@ def release_body(payload: dict, settings: Settings) -> dict | None:
     if mode == "none":
         return None
     content_type = str(payload.get("content_type") or "horror")
+    scenes = _scene_cues(payload.get("scenes"))
     prompt, lyrics = _style_and_lyrics(
         content_type,
         mode,
         str(payload.get("music_prompt") or ""),
         str(payload.get("lyrics") or ""),
     )
+    if scenes:
+        prompt = _with_scene_timeline(prompt, scenes, sung=bool(lyrics))
     thinking = bool(settings.acestep_thinking)
     return {
         "prompt": prompt,
         "lyrics": lyrics,
-        "audio_duration": clamp_duration(payload.get("duration_seconds")),
+        "audio_duration": clamp_duration(_full_duration(payload.get("duration_seconds"), scenes)),
         "audio_format": "wav",
         "inference_steps": 8,
         "thinking": thinking,
@@ -101,10 +104,15 @@ def vocal_language(language: str) -> str:
 
 
 def _style_and_lyrics(content_type: str, music_mode: str, music_prompt: str, lyrics: str) -> tuple[str, str]:
+    """Horror background is instrumental. Kids and full_song sing the complete lyrics."""
     style = music_prompt.strip()
-    if content_type == "horror" and music_mode == "background":
+    sing = music_mode == "full_song" or content_type == "kids"
+    if not sing:
         if not style:
-            style = "dark ambient horror score, low drones, dissonant strings"
+            if content_type == "horror":
+                style = "dark ambient horror score, low drones, dissonant strings"
+            else:
+                style = "cinematic original score"
         lowered = style.lower()
         if "instrumental" not in lowered and "no vocal" not in lowered:
             style = f"{style}, instrumental, no vocals"
@@ -112,10 +120,81 @@ def _style_and_lyrics(content_type: str, music_mode: str, music_prompt: str, lyr
     if not style:
         if content_type == "kids":
             style = "gentle original children's song, acoustic guitar, soft tempo"
+        elif content_type == "horror":
+            style = "dark cinematic theme, low strings, slow tempo"
         else:
             style = "cinematic original score"
-    sung = lyrics.strip() if music_mode == "full_song" or content_type == "kids" else ""
-    return style, sung
+    return style, lyrics.strip()
+
+
+def _scene_cues(value: Any) -> list[dict]:
+    if not isinstance(value, list):
+        return []
+    cues = []
+    for item in value:
+        if isinstance(item, dict):
+            cues.append(item)
+    return cues
+
+
+def _full_duration(value: Any, scenes: list[dict]) -> Any:
+    """Cover the chosen length and every scene. Short requests stay short for clamping."""
+    if not scenes:
+        return value
+    try:
+        chosen = float(value)
+    except (TypeError, ValueError):
+        chosen = 0.0
+    covered = 0.0
+    for scene in scenes:
+        try:
+            covered += float(scene.get("duration") or 0)
+        except (TypeError, ValueError):
+            pass
+        try:
+            covered = max(covered, float(scene.get("end_time") or 0))
+        except (TypeError, ValueError):
+            pass
+    if chosen <= 0 and covered <= 0:
+        return value
+    return max(chosen, covered)
+
+
+def _with_scene_timeline(style: str, scenes: list[dict], *, sung: bool) -> str:
+    if sung:
+        lead = (
+            "Full song for the entire duration. Sing the complete lyrics while the "
+            "arrangement follows every scene in order."
+        )
+    else:
+        lead = "Full instrumental score for the entire duration, following every scene in order."
+    lines = [_scene_line(number, scene) for number, scene in enumerate(scenes, start=1)]
+    return f"{style}. {lead} " + " ".join(lines)
+
+
+def _scene_line(number: int, scene: dict) -> str:
+    beat = str(scene.get("beat") or "scene").strip() or "scene"
+    start = _clock(scene.get("start_time"))
+    end = _clock(scene.get("end_time"))
+    when = f"{start}-{end}" if start and end else ""
+    cue = str(scene.get("music_prompt") or "").strip()
+    if not cue:
+        location = str(scene.get("location") or "").strip()
+        narration = " ".join(str(scene.get("narration") or "").split())[:120]
+        cue = ", ".join(part for part in (location, narration) if part) or beat
+    else:
+        cue = " ".join(cue.split())[:240]
+    clock = f"{when}, " if when else ""
+    return f"Scene {number} ({clock}{beat}): {cue}."
+
+
+def _clock(value: Any) -> str:
+    try:
+        seconds = max(0.0, float(value))
+    except (TypeError, ValueError):
+        return ""
+    whole = int(round(seconds))
+    return f"{whole // 60}:{whole % 60:02d}"
 
 
 def ensure_wav(data: bytes, ffmpeg: str = "ffmpeg") -> bytes:

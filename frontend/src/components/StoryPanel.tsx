@@ -269,8 +269,8 @@ export default function StoryPanel({ projectId, defaultTopic }: { projectId: str
                   {musicBusy ? "Writing music…" : audioSrc ? "Regenerate music" : "Generate music"}
                 </Button>
                 <Typography variant="caption" color="text.secondary">
-                  ACE-Step runs on port 8001. Horror background tracks are instrumental. Kids songs send the original
-                  lyrics.
+                  ACE-Step writes one full track for the whole video, following every scene. Horror background stays
+                  instrumental. Kids stories and Full song sing the original lyrics from start to finish.
                 </Typography>
                 {musicJob?.status === "failed" && musicJob.error && <Alert severity="error">{musicJob.error}</Alert>}
                 {audioSrc && <audio controls src={audioSrc} />}

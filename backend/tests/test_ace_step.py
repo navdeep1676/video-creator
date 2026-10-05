@@ -140,6 +140,79 @@ def test_comfyui_is_unloaded_before_release():
     assert paths.index("/free") < paths.index("/release_task")
 
 
+def test_full_track_follows_every_scene_and_the_chosen_type():
+    settings = _settings()
+    scenes = [
+        {
+            "beat": "hook",
+            "start_time": 0,
+            "end_time": 8,
+            "duration": 8,
+            "narration": "the gate opens",
+            "music_prompt": "sparse drone",
+        },
+        {
+            "beat": "climax",
+            "start_time": 8,
+            "end_time": 20,
+            "duration": 12,
+            "narration": "the lantern flares",
+            "music_prompt": "heavy strings",
+        },
+    ]
+    horror = release_body(
+        {
+            "content_type": "horror",
+            "music_mode": "background",
+            "music_prompt": "low drones",
+            "lyrics": "[Chorus]\nthis must not be sung",
+            "duration_seconds": 12,
+            "scenes": scenes,
+        },
+        settings,
+    )
+    assert horror is not None
+    assert horror["lyrics"] == ""
+    assert horror["audio_duration"] == 20
+    assert "instrumental" in horror["prompt"]
+    assert "no vocals" in horror["prompt"]
+    assert "Scene 1" in horror["prompt"] and "hook" in horror["prompt"] and "sparse drone" in horror["prompt"]
+    assert "Scene 2" in horror["prompt"] and "climax" in horror["prompt"] and "heavy strings" in horror["prompt"]
+
+    lyrics = "[Verse]\nLittle lamp on the sill\n[Chorus]\nGlow glow home is still"
+    kids = release_body(
+        {
+            "content_type": "kids",
+            "music_mode": "background",
+            "music_prompt": "ukulele, bright tempo",
+            "lyrics": lyrics,
+            "duration_seconds": 30,
+            "scenes": scenes,
+        },
+        settings,
+    )
+    assert kids is not None
+    assert kids["lyrics"] == lyrics
+    assert kids["audio_duration"] == 30
+    assert "Full song for the entire duration" in kids["prompt"]
+    assert "hook" in kids["prompt"] and "climax" in kids["prompt"]
+
+    sung = release_body(
+        {
+            "content_type": "horror",
+            "music_mode": "full_song",
+            "music_prompt": "low strings",
+            "lyrics": lyrics,
+            "duration_seconds": 30,
+            "scenes": scenes,
+        },
+        settings,
+    )
+    assert sung is not None
+    assert sung["lyrics"] == lyrics
+    assert "Full song for the entire duration" in sung["prompt"]
+
+
 def test_duration_is_clamped_to_server_range():
     settings = _settings()
     short = release_body({"music_mode": "background", "content_type": "horror", "duration_seconds": 5}, settings)

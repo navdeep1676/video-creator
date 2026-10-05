@@ -41,6 +41,7 @@ export type StorySceneView = {
   sfx: string[];
   characters: string[];
   location: string;
+  music_prompt?: string;
 };
 
 export type StoryView = {
@@ -344,6 +345,7 @@ export default function StoryReview({
                       <Chip key={`${cue}-${cueIndex}`} size="small" label={cue} />
                     ))}
                   </Stack>
+                  <PromptBlock label="Music" text={scene.music_prompt || ""} />
                   <PromptBlock label="Image prompt" text={scene.image_prompt} />
                   <PromptBlock label="Video prompt" text={scene.video_prompt} />
                 </Stack>

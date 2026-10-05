@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.api.projects import get_owned_project
 from app.config import get_settings
-from app.db.models import MusicAsset, Story, StoryJob, User
+from app.db.models import MusicAsset, Story, StoryJob, StoryScene, User
 from app.db.session import get_db
 from app.dependencies import get_current_user, get_storage_dep
 from app.schemas.common import MusicAssetOut
@@ -75,6 +75,30 @@ class MusicGenerateRequest(BaseModel):
     music_mode: Literal["none", "background", "full_song"] | None = None
 
 
+def _scene_cues(db: Session, project_id: UUID, plan: dict) -> list[dict]:
+    """One cue per saved scene so the full track follows the story in order."""
+    rows = list(
+        db.scalars(select(StoryScene).where(StoryScene.project_id == project_id).order_by(StoryScene.index)).all()
+    )
+    planned = plan.get("scenes") if isinstance(plan.get("scenes"), list) else []
+    cues = []
+    for row in rows:
+        draft = planned[row.index] if row.index < len(planned) and isinstance(planned[row.index], dict) else {}
+        cues.append(
+            {
+                "index": row.index,
+                "beat": row.beat,
+                "duration": row.duration,
+                "start_time": row.start_time,
+                "end_time": row.end_time,
+                "narration": row.narration or "",
+                "location": str(draft.get("location_name") or ""),
+                "music_prompt": str(draft.get("music_prompt") or ""),
+            }
+        )
+    return cues
+
+
 def _music_job_out(job: StoryJob) -> dict:
     return {
         "id": str(job.id),
@@ -119,13 +143,15 @@ def generate_music(
     if active is not None:
         return JSONResponse(_music_job_out(active), status_code=202)
     plan = story.plan if isinstance(story.plan, dict) else {}
+    content_type = saved.get("content_type") or "horror"
     payload = {
-        "content_type": saved.get("content_type") or "horror",
+        "content_type": content_type,
         "music_mode": music_mode,
         "music_prompt": plan.get("music_prompt") or "",
         "lyrics": story.lyrics or "",
         "duration_seconds": saved.get("duration_seconds") or 30,
         "language": saved.get("language") or "en",
+        "scenes": _scene_cues(db, project.id, plan),
     }
     saved["music_mode"] = music_mode
     stored = dict(project.settings or {})

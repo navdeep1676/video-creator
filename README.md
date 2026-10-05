@@ -90,7 +90,7 @@ Start one worker so the in-memory queue is not split:
 python -m acestep.api_server --host 127.0.0.1 --port 8001
 ```
 
-Naratto reads `ACESTEP_BASE_URL` (default `http://127.0.0.1:8001`). Open a project, generate a story, then **Generate music**. Horror background tracks send an instrumental prompt and empty lyrics. Kids songs and full songs send the original lyrics and `audio_duration`. A failed ACE-Step task (`status` 2) fails that music job. If the log mentions vLLM on AMD, set `ACESTEP_LM_BACKEND=pt` and restart ACE-Step.
+Naratto reads `ACESTEP_BASE_URL` (default `http://127.0.0.1:8001`). Open a project, generate a story, then **Generate music**. One track covers the full runtime and follows every scene in order. Horror background sends an instrumental prompt and empty lyrics. Kids stories and full songs send the complete original lyrics and `audio_duration`. A failed ACE-Step task (`status` 2) fails that music job. If the log mentions vLLM on AMD, set `ACESTEP_LM_BACKEND=pt` and restart ACE-Step.
 
 Unload ComfyUI before music if it is running. Naratto calls `POST /free` on `COMFYUI_BASE_URL` before the first ACE-Step request. A stopped ComfyUI does not block music.
 

@@ -39,6 +39,8 @@ Horror beats, in order, are hook, setup, tension, escalation, reveal, climax, en
 Kids format is one of nursery_rhyme, educational, animal, moral, alphabet, number, original_song.
 Kids lyrics use original verse and chorus labels.
 The music prompt describes instruments, tempo, and mood only. Do not name an existing song.
+Every scene has its own music_prompt for the instruments, tempo, and mood of that scene.
+Each scene continues the score from the previous scene.
 Scene continues_from_index is null for the first scene and the previous index after that.
 SFX values use only these keys: door_open, footsteps, knock, heartbeat, whisper, bird, boing, laugh.
 """
@@ -75,6 +77,7 @@ class SceneDraft(BaseModel):
     camera_motion: str = "zoom_in"
     transition: str = "crossfade"
     sfx: list[str] = Field(default_factory=list)
+    music_prompt: str = ""
     continues_from_index: int | None = None
     start_time: float = 0
     end_time: float = 0
@@ -133,6 +136,7 @@ def plan_story(project: Any, provider: LLMProvider, settings: Settings) -> Story
                 content_type=project.content_type,
                 settings=settings,
             )
+            ensure_scene_music(plan.scenes, plan.music_prompt, project.content_type)
             return plan
         except (ValidationError, PlanError) as exc:
             last_error = str(exc)
@@ -191,6 +195,7 @@ def _user_prompt(project: Any) -> str:
             f"Scene count: {count}",
             f"Music mode: {project.music_mode}",
             "Write an original story. Do not copy an existing video or song.",
+            "Give every scene its own music_prompt. Describe instruments, tempo, and mood for that scene only.",
             f"Return exactly {count} scenes.",
             (
                 "Include original lyrics with verse and chorus labels. kids_format is one of: "
@@ -259,6 +264,7 @@ def _merge_shortest(scenes: list[SceneDraft]) -> list[SceneDraft]:
     merged.narration = f"{merged.narration} {current.narration}".strip()
     merged.dialogue = " ".join(part for part in (merged.dialogue, current.dialogue) if part).strip()
     merged.sfx = _normalize_sfx(merged.sfx + current.sfx)
+    merged.music_prompt = _join_music(merged.music_prompt, current.music_prompt)
     return scenes[: index - 1] + [merged] + scenes[index + 1 :]
 
 
@@ -330,6 +336,51 @@ def _assign_generation_mode(scenes: list[SceneDraft], total: float, settings: Se
         if used + scene.duration <= budget + 0.05 and (rank((_index, scene))[0] > 0 or rank((_index, scene))[1] > 0):
             scene.generation_mode = "video"
             used += scene.duration
+
+
+def ensure_scene_music(scenes: list[SceneDraft], music_prompt: str, content_type: str) -> None:
+    base = music_prompt.strip()
+    for scene in scenes:
+        if scene.music_prompt.strip():
+            continue
+        scene.music_prompt = _scene_music_line(scene, base, content_type)
+
+
+def _scene_music_line(scene: SceneDraft, base: str, content_type: str) -> str:
+    narration = " ".join(scene.narration.split())[:120]
+    parts = [part for part in (base, f"{scene.beat}, {_beat_mood(scene.beat, content_type)}", scene.location_name.strip(), narration) if part]
+    return ", ".join(parts)
+
+
+def _beat_mood(beat: str, content_type: str) -> str:
+    if content_type == "kids":
+        moods = {
+            "hook": "gentle opening",
+            "verse": "soft and playful",
+            "chorus": "brighter and singable",
+            "ending": "calm and warm",
+        }
+        return moods.get(beat, "light and playful")
+    moods = {
+        "hook": "sparse and quiet",
+        "setup": "slow and cautious",
+        "tension": "uneasy and dissonant",
+        "escalation": "tighter and louder",
+        "reveal": "thin and exposed",
+        "climax": "fast and heavy",
+        "ending": "fading and unresolved",
+    }
+    return moods.get(beat, "matching this scene")
+
+
+def _join_music(left: str, right: str) -> str:
+    left = left.strip()
+    right = right.strip()
+    if not right or right == left:
+        return left
+    if not left:
+        return right
+    return f"{left}; {right}"
 
 
 def _words(text: str) -> int:

@@ -329,6 +329,14 @@ def _location_out(row: StoryLocation) -> dict:
     }
 
 
+def _attach_scene_music(scenes: list[dict], plan: dict) -> None:
+    planned = plan.get("scenes") if isinstance(plan.get("scenes"), list) else []
+    for scene in scenes:
+        index = scene.get("index")
+        draft = planned[index] if isinstance(index, int) and 0 <= index < len(planned) and isinstance(planned[index], dict) else {}
+        scene["music_prompt"] = str(draft.get("music_prompt") or "")
+
+
 def _scene_out(
     scene: StoryScene,
     characters_by_id: dict[str, StoryCharacter],
@@ -412,6 +420,7 @@ def get_story(
     locations_by_id = {str(row.id): row for row in locations}
     scenes = [_scene_out(scene, characters_by_id, locations_by_id) for scene in scene_rows]
     plan = _plan_document(story, characters, locations, scenes)
+    _attach_scene_music(scenes, plan)
     job = latest_story_job(db, project.id)
     music_job = latest_job(db, project.id, "music")
     music_key = music_storage_key(project.id)
