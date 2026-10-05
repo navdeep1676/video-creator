@@ -13,7 +13,7 @@ from app.services.subtitles import (
     estimate_phrase_cues,
     load_cues,
 )
-from app.utils.media import ffprobe_duration_ms, run_ffmpeg
+from app.utils.media import ffmpeg_supports_subtitles, ffprobe_duration_ms, run_ffmpeg
 
 
 @dataclass
@@ -430,9 +430,9 @@ def render_project_video(
                 "-filter_complex",
                 (
                     f"[1:a]aformat=channel_layouts=mono:sample_rates=44100,"
-                    f"volume={options.bgm_volume},aloop=loop=-1:size=2e+09[bg];"
-                    f"[bg]atrim=0:{total_s:.3f},asetpts=PTS-STARTPTS[bg2];"
-                    f"[0:a][bg2]amix=inputs=2:duration=first:dropout_transition=2:normalize=0[aout]"
+                    f"volume={options.bgm_volume},"
+                    f"apad=whole_dur={total_s:.3f},atrim=0:{total_s:.3f},asetpts=PTS-STARTPTS[bg];"
+                    f"[0:a][bg]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[aout]"
                 ),
                 "-map",
                 "[aout]",
@@ -482,7 +482,7 @@ def render_project_video(
     progress(80, "mux")
     final_tmp = work_dir / "output.mp4"
     mux_args = ["-i", str(video_silent), "-i", str(audio_mix)]
-    if ass_path and ass_path.is_file():
+    if ass_path and ass_path.is_file() and ffmpeg_supports_subtitles():
         # Escape path for libass subtitles filter
         ass_escaped = str(ass_path.resolve()).replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
         mux_args += ["-vf", f"subtitles={ass_escaped}"]

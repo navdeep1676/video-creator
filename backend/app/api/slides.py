@@ -24,6 +24,7 @@ from app.schemas.common import (
 )
 from app.services.aspect_ratios import project_aspect_ratio
 from app.services.duration import effective_duration_ms
+from app.services.story_slides import align_story_slide_durations
 from app.services.image_fit import fit_image_to_aspect
 from app.services.media_tokens import signed_url_path
 from app.services.storage import LocalStorage
@@ -463,6 +464,8 @@ def list_slides(
     db: Session = Depends(get_db),
 ) -> list[SlideOut]:
     project = get_owned_project(db, project_id, user)
+    if align_story_slide_durations(db, project.id):
+        db.commit()
     slides = db.scalars(
         select(Slide)
         .options(selectinload(Slide.narration))

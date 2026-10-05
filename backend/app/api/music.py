@@ -7,15 +7,17 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, Request, UploadFi
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.api.projects import get_owned_project
 from app.config import get_settings
-from app.db.models import MusicAsset, Story, StoryJob, StoryScene, User
+from app.db.models import MusicAsset, Slide, Story, StoryJob, StoryScene, User
 from app.db.session import get_db
 from app.dependencies import get_current_user, get_storage_dep
 from app.schemas.common import MusicAssetOut
+from app.services.duration import effective_duration_ms
 from app.services.music_job import execute_music_job
+from app.services.story_slides import align_story_slide_durations
 from app.services.storage import LocalStorage
 from app.services.story_job import latest_story_job
 from app.utils.exceptions import AppError
@@ -76,21 +78,38 @@ class MusicGenerateRequest(BaseModel):
 
 
 def _scene_cues(db: Session, project_id: UUID, plan: dict) -> list[dict]:
-    """One cue per saved scene so the full track follows the story in order."""
+    """One cue per scene. Durations follow the same timeline the video will use."""
+    align_story_slide_durations(db, project_id)
     rows = list(
         db.scalars(select(StoryScene).where(StoryScene.project_id == project_id).order_by(StoryScene.index)).all()
     )
+    slides = list(
+        db.scalars(
+            select(Slide)
+            .options(selectinload(Slide.narration))
+            .where(Slide.project_id == project_id)
+            .order_by(Slide.order_index)
+        ).all()
+    )
+    slide_by_index = {slide.order_index: slide for slide in slides}
     planned = plan.get("scenes") if isinstance(plan.get("scenes"), list) else []
     cues = []
+    cursor = 0.0
     for row in rows:
         draft = planned[row.index] if row.index < len(planned) and isinstance(planned[row.index], dict) else {}
+        slide = slide_by_index.get(row.index)
+        seconds = float(row.duration or 0)
+        if slide is not None:
+            seconds = effective_duration_ms(slide, slide.narration) / 1000.0
+        start = round(cursor, 3)
+        cursor += seconds
         cues.append(
             {
                 "index": row.index,
                 "beat": row.beat,
-                "duration": row.duration,
-                "start_time": row.start_time,
-                "end_time": row.end_time,
+                "duration": round(seconds, 3),
+                "start_time": start,
+                "end_time": round(cursor, 3),
                 "narration": row.narration or "",
                 "location": str(draft.get("location_name") or ""),
                 "music_prompt": str(draft.get("music_prompt") or ""),

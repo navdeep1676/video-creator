@@ -16,6 +16,8 @@ from app.db.session import SessionLocal
 from app.services.aspect_ratios import DEFAULT_ASPECT_RATIO, canvas_for_quality, resolve_aspect_ratio
 from app.services.duration import effective_duration_ms
 from app.services.ffmpeg_pipeline import RenderOptions, SlideMedia, render_project_video
+from app.services.music_job import music_storage_key
+from app.services.story_slides import align_story_slide_durations
 from app.services.storage import get_storage
 from app.services.subtitles import load_cues
 from app.services.tts_service import synthesize_to_mp3
@@ -105,7 +107,7 @@ def generate_slide_tts(self, slide_id: str, force: bool = False) -> dict:
 
         narr.audio_key = audio_key
         narr.audio_duration_ms = duration_ms
-        slide.duration_ms = duration_ms
+        slide.duration_ms = max(int(slide.duration_ms or 0), duration_ms)
         narr.tts_status = "ready"
         narr.tts_error = None
         narr.celery_task_id = None
@@ -192,6 +194,8 @@ def render_video(self, job_id: str) -> dict:
         db.add(job)
         db.commit()
 
+        align_story_slide_durations(db, job.project_id)
+        db.commit()
         slides = db.scalars(
             select(Slide)
             .options(selectinload(Slide.narration))
@@ -238,12 +242,8 @@ def render_video(self, job_id: str) -> dict:
             )
 
         opts = job.options or {}
-        bgm_path = None
-        bgm_id = opts.get("background_music_asset_id")
-        if bgm_id:
-            asset = db.get(MusicAsset, UUID(bgm_id))
-            if asset and asset.project_id == job.project_id:
-                bgm_path = storage.absolute_path(asset.storage_key)
+        project = db.get(Project, job.project_id)
+        bgm_path = _background_music_path(db, storage, project, opts)
 
         # Resolve canvas size from job quality + aspect ratio
         quality = str(opts.get("quality") or "full")
@@ -371,6 +371,27 @@ def render_video(self, job_id: str) -> dict:
         if work_dir.exists():
             shutil.rmtree(work_dir, ignore_errors=True)
         db.close()
+
+
+def _background_music_path(db, storage, project: Project | None, opts: dict):
+    """Use the chosen music asset, or the generated ACE-Step track for this project."""
+    bgm_id = opts.get("background_music_asset_id")
+    if bgm_id and project is not None:
+        asset = db.get(MusicAsset, UUID(str(bgm_id)))
+        if asset and asset.project_id == project.id:
+            path = storage.absolute_path(asset.storage_key)
+            if path.is_file():
+                return path
+    if project is None:
+        return None
+    mode = ((project.settings or {}).get("story") or {}).get("music_mode")
+    if mode == "none":
+        return None
+    key = music_storage_key(project.id)
+    if not storage.exists(key):
+        return None
+    path = storage.absolute_path(key)
+    return path if path.is_file() else None
 
 
 def _fail_job(db, job_id: str, code: str, message: str, details: dict | None = None) -> None:

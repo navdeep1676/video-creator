@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 
+from app.services.duration import effective_duration_ms, scene_timeline_ms
 from app.services.story_slides import (
     duration_ms,
     motion_prompt,
@@ -16,6 +17,20 @@ def test_narration_keeps_dialogue_when_it_is_new():
 
 def test_narration_skips_dialogue_already_in_the_line():
     assert narration_text("कौन है?", "कौन है?") == "कौन है?"
+
+
+def test_speech_does_not_shrink_a_planned_scene():
+    assert scene_timeline_ms(11798, 6744, 6744) == 11798
+    assert scene_timeline_ms(5000, 8000, 8000) == 8000
+    assert scene_timeline_ms(11000, 4000, 6000) == 6000
+
+
+def test_effective_duration_keeps_the_longer_side():
+    slide = SimpleNamespace(duration_ms=14000, narration=None)
+    narr = SimpleNamespace(tts_status="ready", audio_duration_ms=6744)
+    assert effective_duration_ms(slide, narr) == 14000
+    short = SimpleNamespace(duration_ms=3000, narration=None)
+    assert effective_duration_ms(short, narr) == 6744
 
 
 def test_duration_is_at_least_one_second():

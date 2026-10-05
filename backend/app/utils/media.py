@@ -26,9 +26,25 @@ def ffprobe_duration_ms(path: Path | str) -> int:
     return int(round(seconds * 1000))
 
 
+def ffmpeg_supports_subtitles() -> bool:
+    """Homebrew's default ffmpeg bottle has no libass, so the subtitles filter is absent."""
+    result = subprocess.run(
+        ["ffmpeg", "-hide_banner", "-filters"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    for line in (result.stdout or "").splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[1] == "subtitles":
+            return True
+    return False
+
+
 def run_ffmpeg(args: list[str], timeout: int | None = None) -> None:
     cmd = ["ffmpeg", "-y", *args]
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
     if result.returncode != 0:
-        stderr = (result.stderr or "")[-4000:]
-        raise RuntimeError(f"ffmpeg failed ({result.returncode}): {stderr}")
+        stderr = result.stderr or ""
+        tail = "\n".join(stderr.strip().splitlines()[-8:])
+        raise RuntimeError(f"ffmpeg failed ({result.returncode}): {tail}")

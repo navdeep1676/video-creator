@@ -5,9 +5,10 @@ from __future__ import annotations
 import uuid
 
 from sqlalchemy import delete, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.db.models import Narration, Project, Slide, StoryScene
+from app.services.duration import scene_timeline_ms
 
 
 def narration_text(narration: str, dialogue: str) -> str:
@@ -47,6 +48,41 @@ def voice_for_story(project: Project) -> str:
     if language in {"hi", "hinglish"}:
         return "hi-madhur" if male else "hi-swara"
     return "edge-en-andrew" if male else "edge-en-ava"
+
+
+def align_story_slide_durations(session: Session, project_id: uuid.UUID) -> int:
+    """Put planned scene lengths back when speech was copied onto the slide."""
+    scenes = list(
+        session.scalars(
+            select(StoryScene).where(StoryScene.project_id == project_id).order_by(StoryScene.index)
+        ).all()
+    )
+    if not scenes:
+        return 0
+    slides = list(
+        session.scalars(
+            select(Slide)
+            .options(selectinload(Slide.narration))
+            .where(Slide.project_id == project_id)
+            .order_by(Slide.order_index)
+        ).all()
+    )
+    by_index = {scene.index: scene for scene in scenes}
+    changed = 0
+    for slide in slides:
+        scene = by_index.get(slide.order_index)
+        if scene is None:
+            continue
+        spoken = 0
+        narr = slide.narration
+        if narr and narr.tts_status == "ready" and narr.audio_duration_ms:
+            spoken = int(narr.audio_duration_ms)
+        target = scene_timeline_ms(duration_ms(scene.duration), int(slide.duration_ms or 0), spoken)
+        if target and target != int(slide.duration_ms or 0):
+            slide.duration_ms = target
+            session.add(slide)
+            changed += 1
+    return changed
 
 
 def replace_project_slides(session: Session, project: Project, scenes: list[StoryScene]) -> int:

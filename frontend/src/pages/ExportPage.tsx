@@ -153,6 +153,15 @@ export default function ExportPage() {
     queryFn: async () => (await api.get(`/projects/${projectId}`)).data as Project,
   });
 
+  const storyMusicQuery = useQuery({
+    queryKey: ["story", projectId],
+    queryFn: async () =>
+      (await api.get(`/projects/${projectId}/story`)).data as {
+        music?: { audio_url: string | null };
+        settings?: { music_mode?: string; duration_seconds?: number } | null;
+      },
+  });
+
   const readinessQuery = useQuery({
     queryKey: ["export-readiness", projectId],
     queryFn: async () =>
@@ -668,6 +677,13 @@ export default function ExportPage() {
                   </Typography>
                 )}
               </Box>
+            )}
+
+            {storyMusicQuery.data?.music?.audio_url && storyMusicQuery.data?.settings?.music_mode !== "none" && (
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+                Generated music is mixed under the narration for the full video. Scene length stays at the story
+                plan when the spoken line is shorter, so the picture and the music end together.
+              </Typography>
             )}
 
             <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
