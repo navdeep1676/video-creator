@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   Alert,
   Avatar,
@@ -238,6 +238,47 @@ export default function SettingsPage() {
           </Stack>
         </CardContent>
       </Card>
+
+      <ModelCard />
     </Stack>
+  );
+}
+
+function ModelCard() {
+  const modelsQuery = useQuery({
+    queryKey: ["openrouter-models"],
+    queryFn: async () =>
+      (await api.get("/models")).data as {
+        source: string;
+        default_model: string;
+        key_configured: boolean;
+        models: { id: string; name: string }[];
+      },
+  });
+  const catalog = modelsQuery.data;
+
+  return (
+    <Card sx={{ border: "1px solid", borderColor: "divider", maxWidth: 560 }}>
+      <CardContent>
+        <Typography variant="h6" fontWeight={800} gutterBottom>
+          Story models
+        </Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          Story generation uses a free OpenRouter text model. The default is {catalog?.default_model || "openrouter/free"}.
+        </Typography>
+        {catalog && !catalog.key_configured && (
+          <Alert severity="warning" sx={{ mb: 2 }}>
+            OPENROUTER_API_KEY is not set. Listing models still works.
+          </Alert>
+        )}
+        <Stack spacing={0.5}>
+          {(catalog?.models ?? []).map((model) => (
+            <Typography key={model.id} variant="body2">
+              {model.name}
+            </Typography>
+          ))}
+        </Stack>
+      </CardContent>
+    </Card>
   );
 }

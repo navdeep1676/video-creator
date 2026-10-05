@@ -9,9 +9,11 @@
 - Email/password auth (JWT access + httpOnly refresh cookie)
 - Projects & multi-image slide upload
 - Per-slide narration, voice, speed, transition, Ken Burns animation
+- **Wan2.1 Image-to-Video** slide animation (AI motion from stills; mock offline, GPU Diffusers/CLI for real inference)
 - Async Deepgram TTS (mock mode without API key)
 - Background FFmpeg render (fade + concat timeline, subtitles, optional BGM)
 - Download MP4 + signed media URLs for preview
+- Original horror and kids stories from OpenRouter (`POST /api/v1/projects/{id}/story`). Set `OPENROUTER_API_KEY` in `.env`. Free text models are listed at `/api/v1/models`.
 
 ## Quick start (Docker — live reload)
 
@@ -54,6 +56,36 @@ docker compose -f docker-compose.yml up --build
 5. Open **Export video** → **Generate video** → download MP4  
 
 Without `DEEPGRAM_API_KEY`, TTS runs in **mock mode** (sine tones sized to estimated speech length) so the full pipeline still works offline.
+
+### Wan2.1 Image-to-Video (AI Motion)
+
+[Wan2.1](https://github.com/Wan-Video/Wan2.1) animates slide stills into short motion clips during export when a slide’s **Animation** is set to **AI Motion (Wan2.1 I2V)**.
+
+> **Important:** Without a cloud key or GPU, you only get a FFmpeg zoom (mock). That is **not** real Wan video.
+
+| Mode | When | Requirements |
+|------|------|----------------|
+| **fal.ai** (recommended) | `FAL_KEY` set, `WAN_I2V_BACKEND=auto` | Key from [fal.ai/wan-i2v](https://fal.ai/models/fal-ai/wan-i2v) |
+| **Replicate** | `REPLICATE_API_TOKEN` set | [wavespeedai/wan-2.1-i2v-480p](https://replicate.com/wavespeedai/wan-2.1-i2v-480p) |
+| **Diffusers** | CUDA + `WAN_I2V_BACKEND=diffusers` | `pip install -r backend/requirements-wan.txt` |
+| **Mock zoom** | `WAN_I2V_MOCK=true` | Offline stand-in only — looks like Ken Burns |
+
+```bash
+# Real Wan2.1 via fal.ai (works on Mac / Docker without a local GPU)
+# 1. Create a key: https://fal.ai/dashboard/keys
+# 2. Put it in repo-root .env:
+FAL_KEY=your_fal_key_here
+WAN_I2V_MOCK=false
+WAN_I2V_BACKEND=auto
+WAN_I2V_RESOLUTION=480p
+
+# 3. Restart stack
+./scripts/dev-docker.sh -d
+```
+
+Real generation takes **1–4+ minutes per image**. Clips are cached under `uploads/{project_id}/i2v_cache/`.
+
+Status: `GET /health` → `wan_i2v`, or `GET /api/v1/video/wan-i2v/status`.
 
 ## Local development (without full compose)
 
@@ -123,6 +155,9 @@ React → FastAPI → PostgreSQL
 | `STORAGE_ROOT` | `./data` | Local media root |
 | `DEEPGRAM_API_KEY` | empty | Enables real TTS |
 | `TTS_MOCK` | auto if no key | Force mock speech |
+| `WAN_I2V_MOCK` | `true` | FFmpeg stand-in instead of real Wan2.1 |
+| `WAN_I2V_BACKEND` | `mock` | `mock` \| `diffusers` \| `cli` |
+| `WAN_I2V_MODEL_ID` | I2V-14B-480P Diffusers | Hugging Face model id |
 | `SECRET_KEY` | dev string | JWT + media HMAC |
 | `CORS_ORIGINS` | localhost Vite | Comma-separated |
 

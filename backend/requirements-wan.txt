@@ -1,0 +1,26 @@
+# Optional deps for real Wan2.1 Image-to-Video (GPU worker).
+# Core app (requirements.txt) stays lean; install this only on GPU hosts:
+#
+#   pip install -r requirements.txt -r requirements-wan.txt
+#
+# Models (Diffusers):
+#   Wan-AI/Wan2.1-I2V-14B-480P-Diffusers  (default, ~lower VRAM)
+#   Wan-AI/Wan2.1-I2V-14B-720P-Diffusers
+#
+# Official repo: https://github.com/Wan-Video/Wan2.1
+# Note: flash_attn is optional/hard to build; Diffusers path works without it.
+
+torch>=2.4.0
+torchvision>=0.19.0
+diffusers>=0.32.0
+transformers>=4.49.0
+accelerate>=1.1.1
+sentencepiece>=0.2.0
+protobuf>=5.0.0
+imageio>=2.34.0
+imageio-ffmpeg>=0.5.1
+opencv-python-headless>=4.9.0
+ftfy>=6.2.0
+einops>=0.8.0
+# numpy 2.x is fine with recent torch; pin only if you hit conflicts
+numpy>=1.26.0

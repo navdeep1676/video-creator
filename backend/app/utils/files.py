@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import imghdr
 from pathlib import Path
 
 ALLOWED_IMAGE_EXT = {".png", ".jpg", ".jpeg", ".webp"}
@@ -36,12 +35,6 @@ def validate_image_bytes(data: bytes, filename: str) -> str:
         return ".jpg" if ext in {".jpg", ".jpeg"} else ext
     if len(data) > 12 and data[:4] == WEBP_RIFF and data[8:12] == WEBP_WEBP:
         return ".webp"
-    # fallback via imghdr
-    kind = imghdr.what(None, h=data)
-    if kind == "png" and ext == ".png":
-        return ext
-    if kind in {"jpeg", "jpg"} and ext in {".jpg", ".jpeg"}:
-        return ext
     raise ValueError("Image content does not match allowed types (png/jpeg/webp)")
 
 

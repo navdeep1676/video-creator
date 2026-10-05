@@ -85,6 +85,39 @@ def build_export_readiness(project: _ProjectLike, slides: list[Any]) -> ExportRe
                     )
                 )
 
+    # Wan2.1 AI motion: warn when slides use wan_i2v without a real backend
+    wan_slides: list[ExportCheckIssue] = []
+    wan_real = False
+    wan_mock = False
+    wan_error: str | None = None
+    try:
+        from app.services.wan_i2v import resolve_backend, wan_i2v_status
+
+        status = wan_i2v_status()
+        wan_real = bool(status.get("real_ai"))
+        wan_mock = bool(status.get("mock"))
+        wan_error = status.get("error")
+        _ = resolve_backend  # noqa: F841 — imported for clarity
+    except Exception as e:
+        wan_error = str(e)
+
+    for s in slides:
+        anim = getattr(s, "animation", None) or "none"
+        if anim == "wan_i2v":
+            order = s.order_index + 1
+            if not wan_real:
+                wan_slides.append(
+                    ExportCheckIssue(
+                        slide_id=s.id,
+                        order=order,
+                        message=(
+                            f"Slide {order} uses AI Motion but Wan2.1 is not configured "
+                            f"({wan_error or ('mock zoom only' if wan_mock else 'no backend')}). "
+                            "Set FAL_KEY in .env for real video, or switch animation to Ken Burns."
+                        ),
+                    )
+                )
+
     has_slides_ok = len(slides) > 0
     checks = [
         ExportCheckItem(
@@ -128,6 +161,21 @@ def build_export_readiness(project: _ProjectLike, slides: list[Any]) -> ExportRe
             severity="warning" if tts_in_progress else "info",
             count=len(tts_in_progress),
             issues=tts_in_progress,
+        ),
+        ExportCheckItem(
+            id="wan_i2v",
+            ok=len(wan_slides) == 0,
+            label="Wan2.1 AI Motion configured (FAL_KEY / GPU)"
+            if wan_slides
+            else (
+                "Wan2.1 AI Motion ready"
+                if wan_real
+                else "Wan2.1 AI Motion (optional)"
+            ),
+            # Block export when user asked for AI motion but only mock/unconfigured
+            severity="error" if wan_slides else "info",
+            count=len(wan_slides),
+            issues=wan_slides,
         ),
     ]
 

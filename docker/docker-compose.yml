@@ -29,6 +29,9 @@ services:
     build:
       context: ../backend
       dockerfile: Dockerfile
+    env_file:
+      - path: ../.env
+        required: false
     environment:
       DATABASE_URL: postgresql+psycopg://video:video@postgres:5432/video_creator
       REDIS_URL: redis://redis:6379/0
@@ -39,6 +42,13 @@ services:
       DEEPGRAM_API_KEY: ${DEEPGRAM_API_KEY:-}
       TTS_MOCK: ${TTS_MOCK:-true}
       CELERY_TASK_ALWAYS_EAGER: "false"
+      # Wan2.1 I2V — set FAL_KEY (or REPLICATE_API_TOKEN) for real AI motion
+      WAN_I2V_ENABLED: ${WAN_I2V_ENABLED:-true}
+      WAN_I2V_MOCK: ${WAN_I2V_MOCK:-false}
+      WAN_I2V_BACKEND: ${WAN_I2V_BACKEND:-auto}
+      WAN_I2V_MODEL_ID: ${WAN_I2V_MODEL_ID:-Wan-AI/Wan2.1-I2V-14B-480P-Diffusers}
+      WAN_I2V_RESOLUTION: ${WAN_I2V_RESOLUTION:-480p}
+      # FAL_KEY / REPLICATE_API_TOKEN come from env_file (../.env) — do not blank them here
     volumes:
       - mediadata:/data
     ports:
@@ -74,6 +84,9 @@ services:
       context: ../backend
       dockerfile: Dockerfile.worker
     command: celery -A app.workers.celery_app.celery_app worker -Q render -c 1 -l info
+    env_file:
+      - path: ../.env
+        required: false
     environment:
       DATABASE_URL: postgresql+psycopg://video:video@postgres:5432/video_creator
       REDIS_URL: redis://redis:6379/0
@@ -82,6 +95,19 @@ services:
       ENVIRONMENT: development
       DEEPGRAM_API_KEY: ${DEEPGRAM_API_KEY:-}
       TTS_MOCK: ${TTS_MOCK:-true}
+      WAN_I2V_ENABLED: ${WAN_I2V_ENABLED:-true}
+      WAN_I2V_MOCK: ${WAN_I2V_MOCK:-false}
+      WAN_I2V_BACKEND: ${WAN_I2V_BACKEND:-auto}
+      WAN_I2V_MODEL_ID: ${WAN_I2V_MODEL_ID:-Wan-AI/Wan2.1-I2V-14B-480P-Diffusers}
+      WAN_I2V_RESOLUTION: ${WAN_I2V_RESOLUTION:-480p}
+      WAN_I2V_NUM_FRAMES: ${WAN_I2V_NUM_FRAMES:-81}
+      WAN_I2V_OFFLOAD: ${WAN_I2V_OFFLOAD:-true}
+      WAN_I2V_DEVICE: ${WAN_I2V_DEVICE:-auto}
+      WAN_I2V_CKPT_DIR: ${WAN_I2V_CKPT_DIR:-}
+      WAN_I2V_CLI_SCRIPT: ${WAN_I2V_CLI_SCRIPT:-}
+      REPLICATE_WAN_MODEL: ${REPLICATE_WAN_MODEL:-wavespeedai/wan-2.1-i2v-480p}
+      FAL_WAN_I2V_ENDPOINT: ${FAL_WAN_I2V_ENDPOINT:-fal-ai/wan-i2v}
+      # FAL_KEY / REPLICATE_API_TOKEN from env_file (../.env)
     volumes:
       - mediadata:/data
     depends_on:

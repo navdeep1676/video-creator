@@ -20,6 +20,17 @@ class Settings(BaseSettings):
     storage_root: str = "./data"
     cors_origins: str = "http://localhost:5173,http://localhost:3000"
 
+    openrouter_api_key: str = ""
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    openrouter_model: str = "openrouter/free"
+    openrouter_catalog: str = "live"
+    openrouter_site_url: str = "http://localhost:3000"
+    openrouter_app_name: str = "Naratto"
+    comfyui_base_url: str = "http://127.0.0.1:8188"
+    wan_budget_ratio: float = 0.25
+    wan_clip_min_seconds: float = 5
+    wan_clip_max_seconds: float = 10
+
     deepgram_api_key: str = ""
     deepgram_base_url: str = "https://api.deepgram.com/v1/speak"
     tts_mock: bool = False  # force mock TTS even if key present
@@ -39,6 +50,46 @@ class Settings(BaseSettings):
     ken_burns_zoom_end: float = 1.15
     feature_bgm: bool = True
     default_voice: str = "edge-en-ava"
+
+    # Wan2.1 Image-to-Video (https://github.com/Wan-Video/Wan2.1)
+    wan_i2v_enabled: bool = True
+    # auto | fal | replicate | diffusers | cli | mock
+    # auto picks fal → replicate → CUDA diffusers → cli
+    wan_i2v_backend: str = "auto"
+    # Force FFmpeg zoom stand-in (NOT real AI). Leave false for real Wan via API/GPU.
+    wan_i2v_mock: bool = False
+    # fal.ai (recommended without local GPU): https://fal.ai/models/fal-ai/wan-i2v
+    fal_key: str = ""
+    fal_wan_i2v_endpoint: str = "fal-ai/wan-i2v"
+    # Replicate alternative: https://replicate.com/wavespeedai/wan-2.1-i2v-480p
+    replicate_api_token: str = ""
+    replicate_wan_model: str = "wavespeedai/wan-2.1-i2v-480p"
+    # Diffusers model ids (local CUDA only)
+    wan_i2v_model_id: str = "Wan-AI/Wan2.1-I2V-14B-480P-Diffusers"
+    wan_i2v_resolution: str = "480p"  # 480p | 720p
+    wan_i2v_num_frames: int = 81  # ~5s at 16 fps
+    wan_i2v_guidance_scale: float = 5.0
+    wan_i2v_num_inference_steps: int = 30
+    wan_i2v_acceleration: str = "regular"  # fal: none | regular
+    wan_i2v_prompt_expansion: bool = False
+    wan_i2v_seed: int = 42
+    wan_i2v_device: str = "auto"  # auto | cuda | cpu
+    wan_i2v_offload: bool = True  # CPU offload / t5_cpu for lower VRAM
+    wan_i2v_timeout_s: int = 3600
+    wan_i2v_default_prompt: str = (
+        "Subtle natural motion, gentle camera drift, cinematic lighting, high quality, smooth animation"
+    )
+    wan_i2v_negative_prompt: str = (
+        "Bright tones, overexposed, static, blurred details, subtitles, style, works, paintings, "
+        "images, static, overall gray, worst quality, low quality, JPEG compression residue, ugly, "
+        "incomplete, extra fingers, poorly drawn hands, poorly drawn faces, deformed, disfigured, "
+        "misshapen limbs, fused fingers, still picture, messy background, three legs, many people "
+        "in the background, walking backwards"
+    )
+    # CLI backend: path to cloned Wan2.1 repo generate.py and downloaded I2V checkpoint dir
+    wan_i2v_cli_script: str = ""
+    wan_i2v_ckpt_dir: str = ""
+    wan_i2v_python: str = "python"
 
     celery_task_always_eager: bool = False
     render_hard_limit_s: int = 1800
@@ -62,6 +113,17 @@ class Settings(BaseSettings):
     @property
     def use_mock_tts(self) -> bool:
         return self.tts_mock or not self.deepgram_api_key
+
+    @property
+    def use_mock_wan_i2v(self) -> bool:
+        """True only when user explicitly opted into mock zoom (not real AI)."""
+        if not self.wan_i2v_enabled:
+            return True
+        if self.wan_i2v_mock:
+            return True
+        if (self.wan_i2v_backend or "").strip().lower() == "mock":
+            return True
+        return False
 
 
 @lru_cache

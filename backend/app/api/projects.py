@@ -2,13 +2,19 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from typing import Literal
+
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.db.models import Narration, Project, Slide, User, VideoJob
+from app.config import get_settings
+from app.db.models import Narration, Project, Slide, Story, StoryJob, StoryScene, User, VideoJob
 from app.db.session import get_db
 from app.dependencies import get_current_user
+from app.services.openrouter_catalog import load_catalog
+from app.services.story_job import build_llm_provider, execute_story_job, latest_story_job
 from app.schemas.common import ListResponse, ProjectCreate, ProjectOut, ProjectUpdate
 from app.services.aspect_ratios import project_aspect_ratio, resolve_aspect_ratio
 from app.utils.exceptions import AppError
@@ -252,3 +258,106 @@ def delete_project(
     db.delete(project)
     db.commit()
     return {"ok": True}
+
+
+class StoryRequest(BaseModel):
+    content_type: Literal["horror", "kids"] = "horror"
+    topic: str = Field(min_length=1, max_length=4000)
+    duration_seconds: int = Field(ge=5, le=7200)
+    language: Literal["en", "hi", "hinglish"] = "en"
+    visual_style: str = Field(default="Dark Horror", max_length=80)
+    voice: str = Field(default="female", max_length=32)
+    music_mode: Literal["none", "background", "full_song"] = "background"
+    scene_count: str = "auto"
+    llm_model: str | None = None
+
+
+def _check_scene_count(value: str) -> str:
+    if value == "auto":
+        return value
+    if value.isdigit() and 1 <= int(value) <= 300:
+        return value
+    raise AppError("VALIDATION", "scene_count must be auto or an integer from 1 to 300", 400)
+
+
+def _job_out(job: StoryJob) -> dict:
+    return {
+        "id": str(job.id),
+        "project_id": str(job.project_id),
+        "stage": job.stage,
+        "status": job.status,
+        "attempts": job.attempts,
+        "error": job.error,
+    }
+
+
+@router.get("/{project_id}/story")
+def get_story(
+    project_id: UUID,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    project = get_owned_project(db, project_id, user)
+    story = db.scalar(select(Story).where(Story.project_id == project.id))
+    scenes = list(
+        db.scalars(select(StoryScene).where(StoryScene.project_id == project.id).order_by(StoryScene.index)).all()
+    )
+    job = latest_story_job(db, project.id)
+    return {
+        "settings": (project.settings or {}).get("story"),
+        "job": None if job is None else _job_out(job),
+        "story": None
+        if story is None
+        else {"title": story.title, "hook": story.hook, "body": story.body, "lyrics": story.lyrics},
+        "scenes": [
+            {
+                "id": str(scene.id),
+                "index": scene.index,
+                "beat": scene.beat,
+                "narration": scene.narration,
+                "duration": scene.duration,
+                "generation_mode": scene.generation_mode,
+                "status": scene.status,
+            }
+            for scene in scenes
+        ],
+    }
+
+
+@router.post("/{project_id}/story", status_code=202)
+def enqueue_story(
+    project_id: UUID,
+    body: StoryRequest,
+    request: Request,
+    background: BackgroundTasks,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    project = get_owned_project(db, project_id, user)
+    scene_count = _check_scene_count(body.scene_count.strip())
+    settings = get_settings()
+    catalog = load_catalog(settings)
+    model = body.llm_model or settings.openrouter_model
+    if model not in catalog.ids():
+        raise AppError("VALIDATION", "Choose a free text model from the catalog", 400)
+    active = db.scalar(
+        select(StoryJob).where(
+            StoryJob.project_id == project.id,
+            StoryJob.status.in_(("queued", "running")),
+        )
+    )
+    if active is not None:
+        return _job_out(active)
+    payload = body.model_dump()
+    payload["scene_count"] = scene_count
+    payload["llm_model"] = model
+    job = StoryJob(project_id=project.id, stage="story", status="queued", attempts=0, payload=payload)
+    stored = dict(project.settings or {})
+    stored["story"] = payload
+    project.settings = stored
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    provider = build_llm_provider(settings, model, getattr(request.app.state, "llm_provider", None))
+    background.add_task(execute_story_job, job.id, provider)
+    return _job_out(job)

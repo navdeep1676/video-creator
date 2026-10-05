@@ -100,6 +100,16 @@ def list_aspect_ratios(
     return ListResponse(items=items, total=len(items))
 
 
+@router.get("/wan-i2v/status")
+def wan_i2v_capability(
+    user: User = Depends(get_current_user),
+) -> dict:
+    """Wan2.1 image-to-video backend status (mock vs GPU Diffusers/CLI)."""
+    from app.services.wan_i2v import wan_i2v_status
+
+    return wan_i2v_status()
+
+
 @router.get("/caption-styles", response_model=ListResponse)
 def list_caption_styles(
     user: User = Depends(get_current_user),

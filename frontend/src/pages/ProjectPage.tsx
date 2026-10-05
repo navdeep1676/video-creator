@@ -41,6 +41,7 @@ import { api, errMessage, mediaUrl } from "../api/client";
 import SlideList from "../components/SlideList";
 import PageHeader from "../components/PageHeader";
 import ProjectFormDialog, { type ProjectFormValues } from "../components/ProjectFormDialog";
+import StoryPanel from "../components/StoryPanel";
 import ConfirmDialog from "../components/ConfirmDialog";
 import type { Project } from "../types/project";
 import { getAspectOption } from "../types/aspectRatio";
@@ -73,6 +74,8 @@ type Slide = {
   effective_duration_ms: number;
   transition: string;
   animation: string;
+  /** Motion description for Wan2.1 I2V when animation=wan_i2v */
+  motion_prompt?: string | null;
   narration: Narration | null;
 };
 
@@ -104,6 +107,7 @@ type Draft = {
   speed: number;
   transition: string;
   animation: string;
+  motion_prompt: string;
 };
 
 function draftFromSlide(slide: Slide): Draft {
@@ -114,11 +118,58 @@ function draftFromSlide(slide: Slide): Draft {
     speed: slide.narration?.speed ?? 1,
     transition: slide.transition || "fade",
     animation: slide.animation || "none",
+    motion_prompt: slide.motion_prompt || "",
   };
 }
 
 function languageForVoice(voiceId: string, voices: Voice[]): string {
   return voices.find((v) => v.id === voiceId)?.language || "en";
+}
+
+type WanI2vStatus = {
+  enabled: boolean;
+  backend: string;
+  mock: boolean;
+  real_ai?: boolean;
+  fal_configured?: boolean;
+  replicate_configured?: boolean;
+  ready: boolean;
+  error?: string | null;
+  hint?: string | null;
+};
+
+function WanI2vBanner() {
+  const { data } = useQuery({
+    queryKey: ["wan-i2v-status"],
+    queryFn: async () => (await api.get("/video/wan-i2v/status")).data as WanI2vStatus,
+    staleTime: 30_000,
+  });
+  if (!data) return null;
+  if (data.real_ai) {
+    return (
+      <Alert severity="success" variant="outlined">
+        Real Wan2.1 AI motion is active via <strong>{data.backend}</strong>. Export may take a few
+        minutes per image while the cloud model generates video.
+      </Alert>
+    );
+  }
+  if (data.mock) {
+    return (
+      <Alert severity="warning" variant="outlined">
+        <strong>Mock mode</strong> — you will only get a slow zoom (not real AI video). Add{" "}
+        <code>FAL_KEY</code> from{" "}
+        <a href="https://fal.ai/models/fal-ai/wan-i2v" target="_blank" rel="noreferrer">
+          fal.ai/wan-i2v
+        </a>{" "}
+        to <code>.env</code>, set <code>WAN_I2V_MOCK=false</code>, and restart Docker.
+      </Alert>
+    );
+  }
+  return (
+    <Alert severity="error" variant="outlined">
+      Wan2.1 is not configured for real AI video. {data.error || data.hint || "Set FAL_KEY in .env."}
+    </Alert>
+  );
 }
 
 function isDraftDirty(draft: Draft, slide: Slide | null | undefined): boolean {
@@ -129,7 +180,8 @@ function isDraftDirty(draft: Draft, slide: Slide | null | undefined): boolean {
     draft.voice !== base.voice ||
     draft.speed !== base.speed ||
     draft.transition !== base.transition ||
-    draft.animation !== base.animation
+    draft.animation !== base.animation ||
+    draft.motion_prompt !== base.motion_prompt
   );
 }
 
@@ -296,7 +348,8 @@ export default function ProjectPage() {
       next.voice !== draft.voice ||
       next.speed !== draft.speed ||
       next.transition !== draft.transition ||
-      next.animation !== draft.animation
+      next.animation !== draft.animation ||
+      next.motion_prompt !== draft.motion_prompt
     ) {
       setDraft(next);
     }
@@ -310,6 +363,7 @@ export default function ProjectPage() {
         speed: payload.speed,
         transition: payload.transition,
         animation: payload.animation,
+        motion_prompt: payload.motion_prompt,
       });
     },
     []
@@ -692,6 +746,8 @@ export default function ProjectPage() {
           {success}
         </Alert>
       )}
+
+      <StoryPanel projectId={projectId} defaultTopic={projectQuery.data?.title || ""} />
 
       <Card>
         <CardContent>
@@ -1172,9 +1228,27 @@ export default function ProjectPage() {
                     >
                       <MenuItem value="none">None (static)</MenuItem>
                       <MenuItem value="ken_burns">Ken Burns (slow zoom)</MenuItem>
+                      <MenuItem value="wan_i2v">AI Motion (Wan2.1 I2V)</MenuItem>
                     </Select>
                   </FormControl>
                 </Stack>
+                {draft.animation === "wan_i2v" && (
+                  <>
+                    <WanI2vBanner />
+                    <TextField
+                      label="Motion prompt (Wan2.1)"
+                      value={draft.motion_prompt}
+                      onChange={(e) =>
+                        setDraft((d) => (d ? { ...d, motion_prompt: e.target.value } : d))
+                      }
+                      fullWidth
+                      multiline
+                      minRows={2}
+                      placeholder="e.g. Gentle camera push-in, leaves sway in the wind, soft cinematic lighting"
+                      helperText="Describes how the still should move (camera, wind, people walking…). Falls back to narration if empty. Real Wan2.1 needs FAL_KEY or REPLICATE_API_TOKEN in .env."
+                    />
+                  </>
+                )}
                 <Divider />
                 <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
                   <Button

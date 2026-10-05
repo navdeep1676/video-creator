@@ -215,6 +215,11 @@ def render_video(self, job_id: str) -> dict:
                 if not p.is_file():
                     raise NonRetryableTaskError("VALIDATION", f"Slide {s.id} image missing: {p.name}")
             audio_path = storage.absolute_path(n.audio_key)
+            anim = s.animation or "none"
+            if anim == "wan_i2v" and not settings.wan_i2v_enabled:
+                # Fall back so export still works when feature is disabled
+                anim = "ken_burns"
+            i2v_cache = storage.absolute_path(f"uploads/{job.project_id}/i2v_cache")
             media.append(
                 SlideMedia(
                     slide_id=str(s.id),
@@ -225,7 +230,9 @@ def render_video(self, job_id: str) -> dict:
                     text=n.text or "",
                     duration_ms=effective_duration_ms(s, n),
                     transition=s.transition or "fade",
-                    animation=s.animation or "none",
+                    animation=anim,
+                    motion_prompt=getattr(s, "motion_prompt", None) or "",
+                    i2v_cache_dir=i2v_cache if anim == "wan_i2v" else None,
                     subtitle_cues=load_cues(audio_path),
                 )
             )

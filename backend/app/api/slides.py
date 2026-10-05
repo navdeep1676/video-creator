@@ -80,8 +80,12 @@ def _slide_out(slide: Slide, user_id: UUID) -> SlideOut:
         effective_duration_ms=effective_duration_ms(slide, narr),
         transition=slide.transition,
         animation=slide.animation,
+        motion_prompt=slide.motion_prompt,
         narration=narr_out,
     )
+
+
+VALID_ANIMATIONS = frozenset({"none", "ken_burns", "wan_i2v"})
 
 
 def _default_voice(project: Project) -> str:
@@ -154,8 +158,12 @@ def create_empty_slide(
 
     if body.transition not in {"none", "fade"}:
         raise AppError("VALIDATION", "transition must be none or fade", 400)
-    if body.animation not in {"none", "ken_burns"}:
-        raise AppError("VALIDATION", "animation must be none or ken_burns", 400)
+    if body.animation not in VALID_ANIMATIONS:
+        raise AppError(
+            "VALIDATION",
+            "animation must be none, ken_burns, or wan_i2v",
+            400,
+        )
 
     slide_id = uuid4()
     slide = Slide(
@@ -167,6 +175,7 @@ def create_empty_slide(
         duration_ms=settings.default_duration_ms,
         transition=body.transition,
         animation=body.animation,
+        motion_prompt=(body.motion_prompt or "").strip() or None,
     )
     narr = Narration(
         slide_id=slide_id,
@@ -498,9 +507,15 @@ def update_slide(
             raise AppError("VALIDATION", "transition must be none or fade", 400)
         slide.transition = body.transition
     if body.animation is not None:
-        if body.animation not in {"none", "ken_burns"}:
-            raise AppError("VALIDATION", "animation must be none or ken_burns", 400)
+        if body.animation not in VALID_ANIMATIONS:
+            raise AppError(
+                "VALIDATION",
+                "animation must be none, ken_burns, or wan_i2v",
+                400,
+            )
         slide.animation = body.animation
+    if body.motion_prompt is not None:
+        slide.motion_prompt = body.motion_prompt.strip() or None
 
     if invalidate:
         if narr.audio_key and storage.exists(narr.audio_key):

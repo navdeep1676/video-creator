@@ -24,7 +24,7 @@ class SlideMedia:
     text: str
     duration_ms: int
     transition: str  # none | fade
-    animation: str  # none | ken_burns
+    animation: str  # none | ken_burns | wan_i2v
     # Optional precomputed speech-synced cues (relative to slide start)
     subtitle_cues: list[dict[str, Any]] = field(default_factory=list)
     # Multiple images on one slide → slideshow within the slide duration
@@ -32,6 +32,10 @@ class SlideMedia:
     # Per-image hold times (ms). If empty/None weights → equal split.
     # Scaled so they sum to the slide duration (narration length).
     image_durations_ms: list[int | None] = field(default_factory=list)
+    # Wan2.1 I2V motion prompt (used when animation=wan_i2v)
+    motion_prompt: str = ""
+    # Project-level cache dir for generated I2V clips
+    i2v_cache_dir: Path | None = None
 
     def resolved_image_paths(self) -> list[Path]:
         paths = [p for p in (self.image_paths or []) if p]
@@ -213,41 +217,85 @@ def render_project_video(
                 f"scale={options.width}:{options.height}:force_original_aspect_ratio=decrease,"
                 f"pad={options.width}:{options.height}:(ow-iw)/2:(oh-ih)/2"
             )
-            if slide.animation == "ken_burns":
-                zoom_inc = (options.zoom_end - 1.0) / max(n - 1, 1)
-                vf = (
-                    f"{base_scale},"
-                    f"zoompan=z='min(1.0+on*{zoom_inc:.8f},{options.zoom_end})':"
-                    f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
-                    f"d={n}:s={options.width}x{options.height}:fps={options.fps}"
+
+            if slide.animation == "wan_i2v":
+                # Wan2.1 image-to-video → timed clip → canvas + fades
+                from app.services.wan_i2v import generate_i2v
+
+                progress(
+                    10 + int(30 * (i + j / max(n_imgs, 1)) / n_slides),
+                    "wan_i2v",
+                )
+                raw_i2v = work_dir / f"segment_{i:04d}_img_{j:02d}_wan.mp4"
+                prompt = (slide.motion_prompt or "").strip() or (slide.text or "").strip()
+                generate_i2v(
+                    img_path,
+                    raw_i2v,
+                    prompt=prompt,
+                    target_duration_s=sub_d,
+                    cache_dir=slide.i2v_cache_dir,
+                    progress_cb=lambda m: progress(
+                        10 + int(30 * (i + 1) / n_slides), f"wan_i2v:{m[:40]}"
+                    ),
+                )
+                vf_parts = [base_scale, f"fps={options.fps}"]
+                if fade_parts:
+                    vf_parts.extend(fade_parts)
+                vf_parts.append("format=yuv420p")
+                run_ffmpeg(
+                    [
+                        "-i",
+                        str(raw_i2v.resolve()),
+                        "-vf",
+                        ",".join(vf_parts),
+                        "-t",
+                        f"{sub_d:.3f}",
+                        "-an",
+                        "-c:v",
+                        "libx264",
+                        "-preset",
+                        options.x264_preset,
+                        "-crf",
+                        str(options.crf),
+                        str(sub),
+                    ]
                 )
             else:
-                vf = f"{base_scale},fps={options.fps}"
+                if slide.animation == "ken_burns":
+                    zoom_inc = (options.zoom_end - 1.0) / max(n - 1, 1)
+                    vf = (
+                        f"{base_scale},"
+                        f"zoompan=z='min(1.0+on*{zoom_inc:.8f},{options.zoom_end})':"
+                        f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
+                        f"d={n}:s={options.width}x{options.height}:fps={options.fps}"
+                    )
+                else:
+                    vf = f"{base_scale},fps={options.fps}"
 
-            if fade_parts:
-                vf = vf + "," + ",".join(fade_parts)
-            vf = vf + ",format=yuv420p"
+                if fade_parts:
+                    vf = vf + "," + ",".join(fade_parts)
+                vf = vf + ",format=yuv420p"
 
-            run_ffmpeg(
-                [
-                    "-loop",
-                    "1",
-                    "-i",
-                    str(img_path.resolve()),
-                    "-vf",
-                    vf,
-                    "-t",
-                    f"{sub_d:.3f}",
-                    "-an",
-                    "-c:v",
-                    "libx264",
-                    "-preset",
-                    options.x264_preset,
-                    "-crf",
-                    str(options.crf),
-                    str(sub),
-                ]
-            )
+                run_ffmpeg(
+                    [
+                        "-loop",
+                        "1",
+                        "-i",
+                        str(img_path.resolve()),
+                        "-vf",
+                        vf,
+                        "-t",
+                        f"{sub_d:.3f}",
+                        "-an",
+                        "-c:v",
+                        "libx264",
+                        "-preset",
+                        options.x264_preset,
+                        "-crf",
+                        str(options.crf),
+                        str(sub),
+                    ]
+                )
             sub_paths.append(sub)
 
         if len(sub_paths) == 1:

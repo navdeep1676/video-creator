@@ -5,6 +5,11 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT/docker"
 
 export COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml:docker-compose.dev.yml}"
+# Load repo-root .env for FAL_KEY / REPLICATE_API_TOKEN / etc.
+ENV_FILE_ARGS=()
+if [[ -f "$ROOT/.env" ]]; then
+  ENV_FILE_ARGS=(--env-file "$ROOT/.env")
+fi
 
 echo "Starting Docker with hot reload (COMPOSE_FILE=$COMPOSE_FILE)"
-docker compose up --build "$@"
+docker compose "${ENV_FILE_ARGS[@]}" up --build "$@"

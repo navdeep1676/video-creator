@@ -41,6 +41,9 @@ async def lifespan(_: FastAPI):
                   AND (image_keys IS NULL OR image_keys = '[]'::jsonb)
                 """
             )
+            conn.exec_driver_sql(
+                "ALTER TABLE slides ADD COLUMN IF NOT EXISTS motion_prompt TEXT"
+            )
     except Exception:
         pass
     yield
@@ -67,6 +70,8 @@ def create_app() -> FastAPI:
 
     @app.get("/health")
     def health() -> dict:
+        from app.services.wan_i2v import wan_i2v_status
+
         return {
             "status": "ok",
             "mock_tts": settings.use_mock_tts,
@@ -75,7 +80,27 @@ def create_app() -> FastAPI:
                 "deepgram_aura2": bool(settings.deepgram_api_key),
                 "edge_free": True,
             },
+            "wan_i2v": wan_i2v_status(),
         }
+
+    @app.get(f"{settings.api_prefix}/models")
+    def list_models() -> dict:
+        from app.services.openrouter_catalog import load_catalog
+
+        catalog = load_catalog(settings)
+        return {
+            "source": catalog.source,
+            "default_model": catalog.default_model,
+            "default_model_is_free": catalog.default_model in catalog.ids(),
+            "key_configured": bool(settings.openrouter_api_key),
+            "models": catalog.models,
+        }
+
+    @app.get(f"{settings.api_prefix}/gpu")
+    def gpu_status() -> dict:
+        from app.services.gpu import snapshot
+
+        return snapshot(settings)
 
     app.include_router(api_router, prefix=settings.api_prefix)
     return app

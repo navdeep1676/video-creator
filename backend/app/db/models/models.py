@@ -82,6 +82,8 @@ class Slide(Base):
     duration_ms: Mapped[int] = mapped_column(Integer, default=5000)
     transition: Mapped[str] = mapped_column(String(32), default="fade")
     animation: Mapped[str] = mapped_column(String(32), default="none")
+    # Optional motion description for Wan2.1 I2V (animation=wan_i2v)
+    motion_prompt: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
@@ -204,3 +206,90 @@ class VideoJob(Base):
     heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     project: Mapped[Project] = relationship(back_populates="video_jobs")
+
+
+class Story(Base):
+    __tablename__ = "stories"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=new_uuid)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), unique=True
+    )
+    title: Mapped[str] = mapped_column(Text, default="")
+    hook: Mapped[str] = mapped_column(Text, default="")
+    body: Mapped[str] = mapped_column(Text, default="")
+    lyrics: Mapped[str | None] = mapped_column(Text, nullable=True)
+    plan: Mapped[dict] = mapped_column(JSONB, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class StoryCharacter(Base):
+    __tablename__ = "story_characters"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=new_uuid)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(256))
+    age: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    appearance: Mapped[str] = mapped_column(Text, default="")
+    clothing: Mapped[str] = mapped_column(Text, default="")
+    personality: Mapped[str] = mapped_column(Text, default="")
+    style: Mapped[str] = mapped_column(Text, default="")
+    seed: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class StoryLocation(Base):
+    __tablename__ = "story_locations"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=new_uuid)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(256))
+    description: Mapped[str] = mapped_column(Text, default="")
+    lighting: Mapped[str] = mapped_column(Text, default="")
+    mood: Mapped[str] = mapped_column(Text, default="")
+
+
+class StoryScene(Base):
+    __tablename__ = "story_scenes"
+    __table_args__ = (UniqueConstraint("project_id", "index", name="uq_story_scene_project_index"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=new_uuid)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    index: Mapped[int] = mapped_column(Integer, nullable=False)
+    beat: Mapped[str] = mapped_column(String(32), default="")
+    start_time: Mapped[float] = mapped_column(Float, default=0)
+    end_time: Mapped[float] = mapped_column(Float, default=0)
+    duration: Mapped[float] = mapped_column(Float, default=0)
+    narration: Mapped[str] = mapped_column(Text, default="")
+    dialogue: Mapped[str] = mapped_column(Text, default="")
+    character_ids: Mapped[list] = mapped_column(JSONB, default=list)
+    location_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("story_locations.id", ondelete="SET NULL"), nullable=True
+    )
+    image_prompt: Mapped[str] = mapped_column(Text, default="")
+    video_prompt: Mapped[str] = mapped_column(Text, default="")
+    camera_motion: Mapped[str] = mapped_column(String(32), default="")
+    transition: Mapped[str] = mapped_column(String(32), default="")
+    sfx: Mapped[list] = mapped_column(JSONB, default=list)
+    generation_mode: Mapped[str] = mapped_column(String(16), default="image")
+    status: Mapped[str] = mapped_column(String(16), default="pending")
+
+
+class StoryJob(Base):
+    __tablename__ = "story_jobs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=new_uuid)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    stage: Mapped[str] = mapped_column(String(32), default="story")
+    status: Mapped[str] = mapped_column(String(16), default="queued")
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    payload: Mapped[dict] = mapped_column(JSONB, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

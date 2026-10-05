@@ -1,0 +1,166 @@
+{
+  "source": "https://openrouter.ai/api/v1/models",
+  "fetched_at": "2026-10-05",
+  "models": [
+    {
+      "id": "apodex/apodex-1.1-mini:free",
+      "name": "Apodex: Apodex 1.1 Mini (free)",
+      "context_length": 262144,
+      "supports_json": true,
+      "expiration_date": null,
+      "modality": "text->text"
+    },
+    {
+      "id": "cohere/north-mini-code:free",
+      "name": "Cohere: North Mini Code (free)",
+      "context_length": 256000,
+      "supports_json": false,
+      "expiration_date": null,
+      "modality": "text->text"
+    },
+    {
+      "id": "dots-studio/dots-3-note-preview:free",
+      "name": "Dots Studio: Dots3-Note Preview (free)",
+      "context_length": 512000,
+      "supports_json": true,
+      "expiration_date": "2026-12-31",
+      "modality": "text+image->text"
+    },
+    {
+      "id": "openrouter/free",
+      "name": "Free Models Router",
+      "context_length": 200000,
+      "supports_json": true,
+      "expiration_date": null,
+      "modality": "text+image->text"
+    },
+    {
+      "id": "google/gemma-4-26b-a4b-it:free",
+      "name": "Google: Gemma 4 26B A4B  (free)",
+      "context_length": 262144,
+      "supports_json": true,
+      "expiration_date": null,
+      "modality": "text+image+video->text"
+    },
+    {
+      "id": "google/gemma-4-31b-it:free",
+      "name": "Google: Gemma 4 31B (free)",
+      "context_length": 262144,
+      "supports_json": true,
+      "expiration_date": null,
+      "modality": "text+image+video->text"
+    },
+    {
+      "id": "inclusionai/ling-3.0-flash-sante:free",
+      "name": "inclusionAI: Ling 3.0 Flash Sante (free)",
+      "context_length": 262144,
+      "supports_json": false,
+      "expiration_date": null,
+      "modality": "text->text"
+    },
+    {
+      "id": "inclusionai/ling-3.1-flash",
+      "name": "inclusionAI: Ling 3.1 Flash",
+      "context_length": 262144,
+      "supports_json": false,
+      "expiration_date": null,
+      "modality": "text->text"
+    },
+    {
+      "id": "liquid/lfm-2.5-2.6b:free",
+      "name": "LiquidAI: LFM2.5-2.6B (free)",
+      "context_length": 65536,
+      "supports_json": true,
+      "expiration_date": null,
+      "modality": "text->text"
+    },
+    {
+      "id": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+      "name": "NVIDIA: Nemotron 3 Nano Omni (free)",
+      "context_length": 256000,
+      "supports_json": false,
+      "expiration_date": null,
+      "modality": "text+image+audio+video->text"
+    },
+    {
+      "id": "nvidia/nemotron-3-super-120b-a12b:free",
+      "name": "NVIDIA: Nemotron 3 Super (free)",
+      "context_length": 262144,
+      "supports_json": true,
+      "expiration_date": null,
+      "modality": "text->text"
+    },
+    {
+      "id": "nvidia/nemotron-3-ultra-550b-a55b:free",
+      "name": "NVIDIA: Nemotron 3 Ultra (free)",
+      "context_length": 1000000,
+      "supports_json": false,
+      "expiration_date": null,
+      "modality": "text->text"
+    },
+    {
+      "id": "nvidia/nemotron-3.5-content-safety:free",
+      "name": "NVIDIA: Nemotron 3.5 Content Safety (free)",
+      "context_length": 128000,
+      "supports_json": false,
+      "expiration_date": null,
+      "modality": "text+image->text"
+    },
+    {
+      "id": "nvidia/nemotron-3.5-lightning:free",
+      "name": "NVIDIA: Nemotron 3.5 Lightning (free)",
+      "context_length": 1000000,
+      "supports_json": false,
+      "expiration_date": null,
+      "modality": "text->text"
+    },
+    {
+      "id": "poolside/laguna-s-2.1:free",
+      "name": "Poolside: Laguna S 2.1 (free)",
+      "context_length": 262144,
+      "supports_json": false,
+      "expiration_date": "2026-10-31",
+      "modality": "text->text"
+    },
+    {
+      "id": "poolside/laguna-xs-2.1:free",
+      "name": "Poolside: Laguna XS 2.1 (free)",
+      "context_length": 262144,
+      "supports_json": false,
+      "expiration_date": "2026-10-31",
+      "modality": "text->text"
+    },
+    {
+      "id": "qwen/qwen3.8-27b:free",
+      "name": "Qwen: Qwen3.8 27B (free)",
+      "context_length": 262144,
+      "supports_json": true,
+      "expiration_date": null,
+      "modality": "text+image+video->text"
+    },
+    {
+      "id": "stealth/space-bunny-alpha",
+      "name": "Space Bunny Alpha",
+      "context_length": 1000000,
+      "supports_json": true,
+      "expiration_date": "2026-10-05",
+      "modality": "text+image+video->text"
+    },
+    {
+      "id": "thinkingmachines/inkling:free",
+      "name": "Thinking Machines: Inkling (free)",
+      "context_length": 1048576,
+      "supports_json": false,
+      "expiration_date": null,
+      "modality": "text+image+audio->text"
+    },
+    {
+      "id": "thinkingmachines/inkling-small:free",
+      "name": "Thinking Machines: Inkling Small (free)",
+      "context_length": 1048576,
+      "supports_json": false,
+      "expiration_date": null,
+      "modality": "text+image+audio->text"
+    }
+  ]
+}

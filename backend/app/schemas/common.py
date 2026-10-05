@@ -118,6 +118,8 @@ class SlideOut(ORMModel):
     effective_duration_ms: int
     transition: str
     animation: str
+    # Motion description for Wan2.1 I2V when animation=wan_i2v
+    motion_prompt: str | None = None
     narration: NarrationOut | None = None
 
 
@@ -128,12 +130,14 @@ class SlideUpdate(BaseModel):
     duration_ms: int | None = Field(default=None, ge=500, le=120_000)
     transition: str | None = None
     animation: str | None = None
+    motion_prompt: str | None = Field(default=None, max_length=2000)
 
 
 class CreateSlideRequest(BaseModel):
     """Create an empty slide shell; attach images afterward."""
     transition: str = "fade"
     animation: str = "none"
+    motion_prompt: str | None = Field(default=None, max_length=2000)
 
 
 class SlideImageUpdate(BaseModel):
