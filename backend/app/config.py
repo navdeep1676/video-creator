@@ -30,6 +30,12 @@ class Settings(BaseSettings):
     wan_budget_ratio: float = 0.25
     wan_clip_min_seconds: float = 5
     wan_clip_max_seconds: float = 10
+    acestep_base_url: str = "http://127.0.0.1:8001"
+    acestep_api_key: str = ""
+    music_model: str = "acestep-v15-turbo"
+    acestep_thinking: bool = False
+    acestep_timeout_s: float = 900
+    acestep_poll_s: float = 2
 
     deepgram_api_key: str = ""
     deepgram_base_url: str = "https://api.deepgram.com/v1/speak"

@@ -45,7 +45,7 @@ export const theme = createTheme({
     divider: "rgba(15, 23, 42, 0.08)",
   },
   typography: {
-    fontFamily: '"Plus Jakarta Sans", "DM Sans", "Helvetica", "Arial", sans-serif',
+    fontFamily: '"Plus Jakarta Sans", "Noto Sans Devanagari", "DM Sans", "Helvetica", "Arial", sans-serif',
     h3: { fontWeight: 800, letterSpacing: "-0.03em" },
     h4: { fontWeight: 800, letterSpacing: "-0.025em" },
     h5: { fontWeight: 700, letterSpacing: "-0.02em" },

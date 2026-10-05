@@ -10,9 +10,23 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.db.models import Narration, Project, Slide, Story, StoryJob, StoryScene, User, VideoJob
+from app.db.models import (
+    MusicAsset,
+    Narration,
+    Project,
+    Slide,
+    Story,
+    StoryCharacter,
+    StoryJob,
+    StoryLocation,
+    StoryScene,
+    User,
+    VideoJob,
+)
 from app.db.session import get_db
 from app.dependencies import get_current_user
+from app.services.media_tokens import signed_url_path
+from app.services.music_job import latest_job, music_storage_key
 from app.services.openrouter_catalog import load_catalog
 from app.services.story_job import build_llm_provider, execute_story_job, latest_story_job
 from app.schemas.common import ListResponse, ProjectCreate, ProjectOut, ProjectUpdate
@@ -291,6 +305,85 @@ def _job_out(job: StoryJob) -> dict:
     }
 
 
+def _character_out(row: StoryCharacter) -> dict:
+    return {
+        "id": str(row.id),
+        "name": row.name,
+        "age": row.age,
+        "appearance": row.appearance,
+        "clothing": row.clothing,
+        "personality": row.personality,
+        "style": row.style,
+        "seed": row.seed,
+    }
+
+
+def _location_out(row: StoryLocation) -> dict:
+    return {
+        "id": str(row.id),
+        "name": row.name,
+        "description": row.description,
+        "lighting": row.lighting,
+        "mood": row.mood,
+    }
+
+
+def _scene_out(
+    scene: StoryScene,
+    characters_by_id: dict[str, StoryCharacter],
+    locations_by_id: dict[str, StoryLocation],
+) -> dict:
+    names: list[str] = []
+    for raw in scene.character_ids or []:
+        row = characters_by_id.get(str(raw))
+        if row is not None:
+            names.append(row.name)
+    location = locations_by_id.get(str(scene.location_id)) if scene.location_id else None
+    return {
+        "id": str(scene.id),
+        "index": scene.index,
+        "beat": scene.beat,
+        "narration": scene.narration,
+        "dialogue": scene.dialogue or "",
+        "duration": scene.duration,
+        "start_time": scene.start_time,
+        "end_time": scene.end_time,
+        "generation_mode": scene.generation_mode,
+        "status": scene.status,
+        "image_prompt": scene.image_prompt or "",
+        "video_prompt": scene.video_prompt or "",
+        "camera_motion": scene.camera_motion or "",
+        "transition": scene.transition or "",
+        "sfx": list(scene.sfx or []),
+        "characters": names,
+        "location": "" if location is None else location.name,
+    }
+
+
+def _plan_document(
+    story: Story | None,
+    characters: list[StoryCharacter],
+    locations: list[StoryLocation],
+    scenes: list[dict],
+) -> dict:
+    if story is not None and isinstance(story.plan, dict) and story.plan:
+        return story.plan
+    if story is None:
+        return {}
+    return {
+        "title": story.title,
+        "hook": story.hook,
+        "story": story.body,
+        "lyrics": story.lyrics,
+        "kids_format": None,
+        "characters": [_character_out(row) for row in characters],
+        "locations": [_location_out(row) for row in locations],
+        "music_prompt": "",
+        "sfx_notes": "",
+        "scenes": scenes,
+    }
+
+
 @router.get("/{project_id}/story")
 def get_story(
     project_id: UUID,
@@ -299,28 +392,54 @@ def get_story(
 ) -> dict:
     project = get_owned_project(db, project_id, user)
     story = db.scalar(select(Story).where(Story.project_id == project.id))
-    scenes = list(
+    characters = list(
+        db.scalars(
+            select(StoryCharacter)
+            .where(StoryCharacter.project_id == project.id)
+            .order_by(StoryCharacter.name)
+        ).all()
+    )
+    locations = list(
+        db.scalars(
+            select(StoryLocation).where(StoryLocation.project_id == project.id).order_by(StoryLocation.name)
+        ).all()
+    )
+    scene_rows = list(
         db.scalars(select(StoryScene).where(StoryScene.project_id == project.id).order_by(StoryScene.index)).all()
     )
+    characters_by_id = {str(row.id): row for row in characters}
+    locations_by_id = {str(row.id): row for row in locations}
+    scenes = [_scene_out(scene, characters_by_id, locations_by_id) for scene in scene_rows]
+    plan = _plan_document(story, characters, locations, scenes)
     job = latest_story_job(db, project.id)
+    music_job = latest_job(db, project.id, "music")
+    music_key = music_storage_key(project.id)
+    music_asset = db.scalar(
+        select(MusicAsset).where(MusicAsset.project_id == project.id, MusicAsset.storage_key == music_key)
+    )
     return {
         "settings": (project.settings or {}).get("story"),
         "job": None if job is None else _job_out(job),
+        "music": {
+            "job": None if music_job is None else _job_out(music_job),
+            "audio_url": signed_url_path(music_key, str(user.id)) if music_asset is not None else None,
+            "filename": None if music_asset is None else music_asset.filename,
+        },
         "story": None
         if story is None
-        else {"title": story.title, "hook": story.hook, "body": story.body, "lyrics": story.lyrics},
-        "scenes": [
-            {
-                "id": str(scene.id),
-                "index": scene.index,
-                "beat": scene.beat,
-                "narration": scene.narration,
-                "duration": scene.duration,
-                "generation_mode": scene.generation_mode,
-                "status": scene.status,
-            }
-            for scene in scenes
-        ],
+        else {
+            "title": story.title,
+            "hook": story.hook,
+            "body": story.body,
+            "lyrics": story.lyrics,
+            "kids_format": plan.get("kids_format"),
+            "music_prompt": plan.get("music_prompt") or "",
+            "sfx_notes": plan.get("sfx_notes") or "",
+            "plan": plan,
+        },
+        "characters": [_character_out(row) for row in characters],
+        "locations": [_location_out(row) for row in locations],
+        "scenes": scenes,
     }
 
 
@@ -343,6 +462,7 @@ def enqueue_story(
     active = db.scalar(
         select(StoryJob).where(
             StoryJob.project_id == project.id,
+            StoryJob.stage == "story",
             StoryJob.status.in_(("queued", "running")),
         )
     )

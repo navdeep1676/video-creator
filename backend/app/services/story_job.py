@@ -141,5 +141,8 @@ def save_story(session: Session, project: Project, plan: StoryPlan) -> None:
 
 def latest_story_job(session: Session, project_id: uuid.UUID) -> StoryJob | None:
     return session.scalar(
-        select(StoryJob).where(StoryJob.project_id == project_id).order_by(StoryJob.created_at.desc()).limit(1)
+        select(StoryJob)
+        .where(StoryJob.project_id == project_id, StoryJob.stage == "story")
+        .order_by(StoryJob.created_at.desc())
+        .limit(1)
     )

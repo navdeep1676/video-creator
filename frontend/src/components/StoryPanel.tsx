@@ -6,24 +6,22 @@ import {
   Card,
   CardContent,
   Chip,
+  Drawer,
   MenuItem,
   Stack,
   TextField,
   Typography,
 } from "@mui/material";
 import AutoStoriesIcon from "@mui/icons-material/AutoStories";
-import { api, errMessage } from "../api/client";
+import { api, errMessage, mediaUrl } from "../api/client";
+import StoryReview, {
+  type StoryCharacterView,
+  type StoryLocationView,
+  type StorySceneView,
+  type StoryView,
+} from "./StoryReview";
 
 type FreeModel = { id: string; name: string };
-
-type StoryScene = {
-  id: string;
-  index: number;
-  beat: string;
-  narration: string;
-  duration: number;
-  generation_mode: string;
-};
 
 type StoryPayload = {
   settings: {
@@ -37,8 +35,15 @@ type StoryPayload = {
     llm_model?: string;
   } | null;
   job: { id: string; status: string; error: string | null } | null;
-  story: { title: string; hook: string; body: string; lyrics: string | null } | null;
-  scenes: StoryScene[];
+  music?: {
+    job: { id: string; status: string; error: string | null } | null;
+    audio_url: string | null;
+    filename: string | null;
+  };
+  story: StoryView | null;
+  characters: StoryCharacterView[];
+  locations: StoryLocationView[];
+  scenes: StorySceneView[];
 };
 
 const DURATIONS = [30, 60, 140, 180, 300];
@@ -54,6 +59,7 @@ export default function StoryPanel({ projectId, defaultTopic }: { projectId: str
   const [sceneCount, setSceneCount] = useState("auto");
   const [model, setModel] = useState("");
   const [formError, setFormError] = useState("");
+  const [reviewOpen, setReviewOpen] = useState(false);
 
   const modelsQuery = useQuery({
     queryKey: ["openrouter-models"],
@@ -69,8 +75,10 @@ export default function StoryPanel({ projectId, defaultTopic }: { projectId: str
     queryKey: ["story", projectId],
     queryFn: async () => (await api.get(`/projects/${projectId}/story`)).data as StoryPayload,
     refetchInterval: (query) => {
-      const status = query.state.data?.job?.status;
-      return status === "queued" || status === "running" ? 2000 : false;
+      const storyStatus = query.state.data?.job?.status;
+      const musicStatus = query.state.data?.music?.job?.status;
+      const active = (status?: string) => status === "queued" || status === "running";
+      return active(storyStatus) || active(musicStatus) ? 2000 : false;
     },
   });
 
@@ -111,125 +119,183 @@ export default function StoryPanel({ projectId, defaultTopic }: { projectId: str
     onError: (error) => setFormError(errMessage(error)),
   });
 
+  const generateMusic = useMutation({
+    mutationFn: async () => (await api.post(`/projects/${projectId}/music/generate`, { music_mode: musicMode })).data,
+    onSuccess: async () => {
+      setFormError("");
+      await qc.invalidateQueries({ queryKey: ["story", projectId] });
+    },
+    onError: (error) => setFormError(errMessage(error)),
+  });
+
   const story = storyQuery.data?.story;
   const scenes = storyQuery.data?.scenes ?? [];
   const job = storyQuery.data?.job;
   const planning = job?.status === "queued" || job?.status === "running" || generate.isPending;
+  const musicJob = storyQuery.data?.music?.job;
+  const musicBusy = musicJob?.status === "queued" || musicJob?.status === "running" || generateMusic.isPending;
   const models = modelsQuery.data?.models ?? [];
+  const audioSrc = mediaUrl(storyQuery.data?.music?.audio_url);
+  const videoCount = scenes.filter((scene) => scene.generation_mode === "video").length;
 
   return (
-    <Card>
-      <CardContent>
-        <Stack spacing={2}>
-          <Stack direction="row" spacing={1} alignItems="center">
-            <AutoStoriesIcon color="primary" />
-            <Typography variant="h6" fontWeight={800}>
-              AI story
+    <Stack spacing={2}>
+      <Card>
+        <CardContent>
+          <Stack spacing={2}>
+            <Stack direction="row" spacing={1} alignItems="center">
+              <AutoStoriesIcon color="primary" />
+              <Typography variant="h6" fontWeight={800}>
+                AI story
+              </Typography>
+            </Stack>
+            <Typography variant="body2" color="text.secondary">
+              OpenRouter writes an original horror story or kids song, then splits it into scenes. Wan clips stay inside
+              about a quarter of the runtime.
             </Typography>
-          </Stack>
-          <Typography variant="body2" color="text.secondary">
-            OpenRouter writes an original horror story or kids song, then splits it into scenes. Wan clips stay inside
-            about a quarter of the runtime.
-          </Typography>
-          {modelsQuery.data && !modelsQuery.data.key_configured && (
-            <Alert severity="warning">Add OPENROUTER_API_KEY to the environment before generating a story.</Alert>
-          )}
-          {formError && (
-            <Alert severity="error" onClose={() => setFormError("")}>
-              {formError}
-            </Alert>
-          )}
-          {job?.status === "failed" && job.error && <Alert severity="error">{job.error}</Alert>}
-          <Stack direction={{ xs: "column", md: "row" }} spacing={1.5}>
-            <TextField select label="Type" value={contentType} onChange={(e) => setContentType(e.target.value)} fullWidth>
-              <MenuItem value="horror">Horror</MenuItem>
-              <MenuItem value="kids">Kids</MenuItem>
-            </TextField>
-            <TextField select label="Length" value={duration} onChange={(e) => setDuration(e.target.value)} fullWidth>
-              {DURATIONS.map((seconds) => (
-                <MenuItem key={seconds} value={String(seconds)}>
-                  {seconds}s
-                </MenuItem>
-              ))}
-            </TextField>
-            <TextField select label="Language" value={language} onChange={(e) => setLanguage(e.target.value)} fullWidth>
-              <MenuItem value="en">English</MenuItem>
-              <MenuItem value="hi">Hindi</MenuItem>
-              <MenuItem value="hinglish">Hinglish</MenuItem>
-            </TextField>
-          </Stack>
-          <TextField label="Topic" value={topic} onChange={(e) => setTopic(e.target.value)} fullWidth multiline minRows={2} />
-          <Stack direction={{ xs: "column", md: "row" }} spacing={1.5}>
-            <TextField
-              select
-              label="Style"
-              value={visualStyle}
-              onChange={(e) => setVisualStyle(e.target.value)}
-              fullWidth
+            {modelsQuery.data && !modelsQuery.data.key_configured && (
+              <Alert severity="warning">Add OPENROUTER_API_KEY to the environment before generating a story.</Alert>
+            )}
+            {formError && (
+              <Alert severity="error" onClose={() => setFormError("")}>
+                {formError}
+              </Alert>
+            )}
+            {job?.status === "failed" && job.error && <Alert severity="error">{job.error}</Alert>}
+            <Stack direction={{ xs: "column", md: "row" }} spacing={1.5}>
+              <TextField select label="Type" value={contentType} onChange={(e) => setContentType(e.target.value)} fullWidth>
+                <MenuItem value="horror">Horror</MenuItem>
+                <MenuItem value="kids">Kids</MenuItem>
+              </TextField>
+              <TextField select label="Length" value={duration} onChange={(e) => setDuration(e.target.value)} fullWidth>
+                {DURATIONS.map((seconds) => (
+                  <MenuItem key={seconds} value={String(seconds)}>
+                    {seconds}s
+                  </MenuItem>
+                ))}
+              </TextField>
+              <TextField select label="Language" value={language} onChange={(e) => setLanguage(e.target.value)} fullWidth>
+                <MenuItem value="en">English</MenuItem>
+                <MenuItem value="hi">Hindi</MenuItem>
+                <MenuItem value="hinglish">Hinglish</MenuItem>
+              </TextField>
+            </Stack>
+            <TextField label="Topic" value={topic} onChange={(e) => setTopic(e.target.value)} fullWidth multiline minRows={2} />
+            <Stack direction={{ xs: "column", md: "row" }} spacing={1.5}>
+              <TextField
+                select
+                label="Style"
+                value={visualStyle}
+                onChange={(e) => setVisualStyle(e.target.value)}
+                fullWidth
+              >
+                {["Dark Horror", "Cinematic", "3D Cartoon", "2D Cartoon", "Kids Animation", "Anime"].map((style) => (
+                  <MenuItem key={style} value={style}>
+                    {style}
+                  </MenuItem>
+                ))}
+              </TextField>
+              <TextField select label="Music" value={musicMode} onChange={(e) => setMusicMode(e.target.value)} fullWidth>
+                <MenuItem value="background">Background</MenuItem>
+                <MenuItem value="full_song">Full song</MenuItem>
+                <MenuItem value="none">None</MenuItem>
+              </TextField>
+              <TextField
+                select
+                label="Model"
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+                fullWidth
+              >
+                {models.map((item) => (
+                  <MenuItem key={item.id} value={item.id}>
+                    {item.name}
+                  </MenuItem>
+                ))}
+              </TextField>
+            </Stack>
+            <Button
+              variant="contained"
+              disabled={planning || !topic.trim()}
+              onClick={() => generate.mutate()}
+              sx={{ alignSelf: "flex-start" }}
             >
-              {["Dark Horror", "Cinematic", "3D Cartoon", "2D Cartoon", "Kids Animation", "Anime"].map((style) => (
-                <MenuItem key={style} value={style}>
-                  {style}
-                </MenuItem>
-              ))}
-            </TextField>
-            <TextField select label="Music" value={musicMode} onChange={(e) => setMusicMode(e.target.value)} fullWidth>
-              <MenuItem value="background">Background</MenuItem>
-              <MenuItem value="full_song">Full song</MenuItem>
-              <MenuItem value="none">None</MenuItem>
-            </TextField>
-            <TextField
-              select
-              label="Model"
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-              fullWidth
-            >
-              {models.map((item) => (
-                <MenuItem key={item.id} value={item.id}>
-                  {item.name}
-                </MenuItem>
-              ))}
-            </TextField>
-          </Stack>
-          <Button
-            variant="contained"
-            disabled={planning || !topic.trim()}
-            onClick={() => generate.mutate()}
-            sx={{ alignSelf: "flex-start" }}
-          >
-            {planning ? "Writing the story…" : story ? "Regenerate story" : "Generate story"}
-          </Button>
-          {story && (
-            <Stack spacing={1}>
-              <Typography variant="subtitle1" fontWeight={800}>
-                {story.title}
-              </Typography>
-              <Typography variant="body2">{story.hook}</Typography>
-              <Typography variant="body2" sx={{ whiteSpace: "pre-wrap" }}>
-                {story.body}
-              </Typography>
-              {story.lyrics && (
-                <Typography
-                  variant="body2"
-                  sx={{ whiteSpace: "pre-wrap", bgcolor: "rgba(109,40,217,0.06)", borderRadius: 2, p: 1.5 }}
-                >
-                  {story.lyrics}
+              {planning ? "Writing the story…" : story ? "Regenerate story" : "Generate story"}
+            </Button>
+            {story && musicMode !== "none" && (
+              <Stack spacing={1} alignItems="flex-start">
+                <Button variant="outlined" disabled={planning || musicBusy} onClick={() => generateMusic.mutate()}>
+                  {musicBusy ? "Writing music…" : audioSrc ? "Regenerate music" : "Generate music"}
+                </Button>
+                <Typography variant="caption" color="text.secondary">
+                  ACE-Step runs on port 8001. Horror background tracks are instrumental. Kids songs send the original
+                  lyrics.
                 </Typography>
-              )}
-            </Stack>
-          )}
-          {scenes.map((scene) => (
-            <Stack key={scene.id} direction="row" spacing={1} alignItems="flex-start">
-              <Chip size="small" label={scene.generation_mode === "video" ? "Video" : "Image"} />
-              <Typography variant="body2">
-                {scene.index + 1}. {scene.beat ? `${scene.beat} · ` : ""}
-                {scene.narration}
+                {musicJob?.status === "failed" && musicJob.error && <Alert severity="error">{musicJob.error}</Alert>}
+                {audioSrc && <audio controls src={audioSrc} />}
+              </Stack>
+            )}
+            {story && musicMode === "none" && (
+              <Typography variant="body2" color="text.secondary">
+                Music is off, so ACE-Step is not called.
               </Typography>
-            </Stack>
-          ))}
-        </Stack>
-      </CardContent>
-    </Card>
+            )}
+            {story && (
+              <Stack
+                direction={{ xs: "column", sm: "row" }}
+                spacing={1.5}
+                alignItems={{ xs: "stretch", sm: "center" }}
+                justifyContent="space-between"
+              >
+                <Stack spacing={0.75} sx={{ minWidth: 0 }}>
+                  <Typography variant="subtitle1" fontWeight={800} sx={{ overflowWrap: "anywhere" }}>
+                    {story.title}
+                  </Typography>
+                  {story.hook && (
+                    <Typography
+                      variant="body2"
+                      color="text.secondary"
+                      sx={{
+                        display: "-webkit-box",
+                        WebkitLineClamp: 2,
+                        WebkitBoxOrient: "vertical",
+                        overflow: "hidden",
+                      }}
+                    >
+                      {story.hook}
+                    </Typography>
+                  )}
+                  <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+                    <Chip size="small" color="primary" label={`${scenes.length} scenes`} />
+                    <Chip size="small" label={`${videoCount} video · ${scenes.length - videoCount} image`} />
+                  </Stack>
+                </Stack>
+                <Button variant="outlined" onClick={() => setReviewOpen(true)} sx={{ flexShrink: 0 }}>
+                  Review story
+                </Button>
+              </Stack>
+            )}
+          </Stack>
+        </CardContent>
+      </Card>
+      <Drawer
+        anchor="right"
+        open={reviewOpen && Boolean(story)}
+        onClose={() => setReviewOpen(false)}
+        PaperProps={{
+          sx: { width: { xs: "100%", sm: 520, md: 680 }, maxWidth: "100%" },
+        }}
+      >
+        {story && (
+          <StoryReview
+            story={story}
+            scenes={scenes}
+            characters={storyQuery.data?.characters ?? []}
+            locations={storyQuery.data?.locations ?? []}
+            onClose={() => setReviewOpen(false)}
+          />
+        )}
+      </Drawer>
+    </Stack>
   );
 }
