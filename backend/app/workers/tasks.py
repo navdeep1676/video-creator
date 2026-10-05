@@ -411,6 +411,15 @@ def _fail_job(db, job_id: str, code: str, message: str, details: dict | None = N
         db.rollback()
 
 
+@celery_app.task(name="app.workers.tasks.generate_project_images")
+def generate_project_images(job_id: str) -> dict:
+    """Draw Qwen-Image-2.1 stills. Runs on the default queue."""
+    from app.services.image_job import execute_image_job
+
+    execute_image_job(UUID(job_id))
+    return {"job_id": job_id}
+
+
 @celery_app.task(name="app.workers.tasks.reclaim_stuck_jobs")
 def reclaim_stuck_jobs() -> dict:
     settings = get_settings()

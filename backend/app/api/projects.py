@@ -423,6 +423,7 @@ def get_story(
     _attach_scene_music(scenes, plan)
     job = latest_story_job(db, project.id)
     music_job = latest_job(db, project.id, "music")
+    image_job = latest_job(db, project.id, "images")
     music_key = music_storage_key(project.id)
     music_asset = db.scalar(
         select(MusicAsset).where(MusicAsset.project_id == project.id, MusicAsset.storage_key == music_key)
@@ -435,6 +436,7 @@ def get_story(
             "audio_url": signed_url_path(music_key, str(user.id)) if music_asset is not None else None,
             "filename": None if music_asset is None else music_asset.filename,
         },
+        "images": {"job": None if image_job is None else _job_out(image_job)},
         "story": None
         if story is None
         else {

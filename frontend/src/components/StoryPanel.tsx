@@ -40,6 +40,9 @@ type StoryPayload = {
     audio_url: string | null;
     filename: string | null;
   };
+  images?: {
+    job: { id: string; status: string; error: string | null } | null;
+  };
   story: StoryView | null;
   characters: StoryCharacterView[];
   locations: StoryLocationView[];
@@ -77,8 +80,9 @@ export default function StoryPanel({ projectId, defaultTopic }: { projectId: str
     refetchInterval: (query) => {
       const storyStatus = query.state.data?.job?.status;
       const musicStatus = query.state.data?.music?.job?.status;
+      const imageStatus = query.state.data?.images?.job?.status;
       const active = (status?: string) => status === "queued" || status === "running";
-      return active(storyStatus) || active(musicStatus) ? 2000 : false;
+      return active(storyStatus) || active(musicStatus) || active(imageStatus) ? 2000 : false;
     },
   });
 
@@ -128,6 +132,16 @@ export default function StoryPanel({ projectId, defaultTopic }: { projectId: str
     onError: (error) => setFormError(errMessage(error)),
   });
 
+  const generateImages = useMutation({
+    mutationFn: async (force: boolean) =>
+      (await api.post(`/projects/${projectId}/images/generate`, { force })).data,
+    onSuccess: async () => {
+      setFormError("");
+      await qc.invalidateQueries({ queryKey: ["story", projectId] });
+    },
+    onError: (error) => setFormError(errMessage(error)),
+  });
+
   const slidesQuery = useQuery({
     queryKey: ["slides", projectId],
     queryFn: async () =>
@@ -158,11 +172,16 @@ export default function StoryPanel({ projectId, defaultTopic }: { projectId: str
   const planning = job?.status === "queued" || job?.status === "running" || generate.isPending;
   const musicJob = storyQuery.data?.music?.job;
   const musicBusy = musicJob?.status === "queued" || musicJob?.status === "running" || generateMusic.isPending;
+  const imageJob = storyQuery.data?.images?.job;
+  const imageBusy = imageJob?.status === "queued" || imageJob?.status === "running" || generateImages.isPending;
+  const redrawExisting = slides.length > 0 && slides.every((slide) => (slide.image_count || 0) > 0);
   const models = modelsQuery.data?.models ?? [];
   const audioSrc = mediaUrl(storyQuery.data?.music?.audio_url);
   const videoCount = scenes.filter((scene) => scene.generation_mode === "video").length;
   const jobStatus = job?.status ?? null;
   const previousJobStatus = useRef<string | null>(null);
+  const imageJobStatus = imageJob?.status ?? null;
+  const previousImageStatus = useRef<string | null>(null);
 
   useEffect(() => {
     if (previousJobStatus.current && previousJobStatus.current !== "succeeded" && jobStatus === "succeeded") {
@@ -170,6 +189,17 @@ export default function StoryPanel({ projectId, defaultTopic }: { projectId: str
     }
     previousJobStatus.current = jobStatus;
   }, [jobStatus, projectId, qc]);
+
+  useEffect(() => {
+    if (
+      previousImageStatus.current &&
+      previousImageStatus.current !== "succeeded" &&
+      imageJobStatus === "succeeded"
+    ) {
+      void qc.invalidateQueries({ queryKey: ["slides", projectId] });
+    }
+    previousImageStatus.current = imageJobStatus;
+  }, [imageJobStatus, projectId, qc]);
 
   useEffect(() => {
     if (planning || !story || scenes.length === 0 || !slidesQuery.isSuccess || slidesMatch) return;
@@ -280,6 +310,22 @@ export default function StoryPanel({ projectId, defaultTopic }: { projectId: str
               <Typography variant="body2" color="text.secondary">
                 Music is off, so ACE-Step is not called.
               </Typography>
+            )}
+            {story && (
+              <Stack spacing={1} alignItems="flex-start">
+                <Button
+                  variant="outlined"
+                  disabled={planning || imageBusy}
+                  onClick={() => generateImages.mutate(redrawExisting)}
+                >
+                  {imageBusy ? "Drawing scenes…" : redrawExisting ? "Regenerate scene images" : "Generate scene images"}
+                </Button>
+                <Typography variant="caption" color="text.secondary">
+                  ComfyUI on port 8188 draws each scene with Qwen-Image-2.1. Slides that already have a picture are
+                  kept until you regenerate. Start the Celery worker before you press this.
+                </Typography>
+                {imageJob?.status === "failed" && imageJob.error && <Alert severity="error">{imageJob.error}</Alert>}
+              </Stack>
             )}
             {story && (
               <Stack

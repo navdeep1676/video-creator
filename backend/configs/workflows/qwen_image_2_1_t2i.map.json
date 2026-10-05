@@ -1,0 +1,14 @@
+{
+  "checkpoint": "1.inputs.unet_name",
+  "clip": "2.inputs.clip_name",
+  "vae": "3.inputs.vae_name",
+  "positive": "4.inputs.prompt",
+  "negative": "4.inputs.negative_prompt",
+  "resolution": "4.inputs.resolution",
+  "seed": "6.inputs.seed",
+  "width": "5.inputs.width",
+  "height": "5.inputs.height",
+  "steps": "6.inputs.steps",
+  "cfg": "6.inputs.cfg",
+  "filename_prefix": "8.inputs.filename_prefix"
+}

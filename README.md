@@ -15,6 +15,7 @@
 - Download MP4 + signed media URLs for preview
 - Original horror and kids stories from OpenRouter (`POST /api/v1/projects/{id}/story`). Set `OPENROUTER_API_KEY` in `.env`. Free text models are listed at `/api/v1/models`.
 - Local ACE-Step 1.5 music (`POST /api/v1/projects/{id}/music/generate`) once a story exists. The ACE-Step server stays on port 8001. `music_mode=none` skips it.
+- Local Qwen-Image-2.1 scene stills through ComfyUI (`POST /api/v1/projects/{id}/images/generate`). ComfyUI stays on port 8188.
 
 ## Quick start (Docker — live reload)
 
@@ -93,6 +94,26 @@ python -m acestep.api_server --host 127.0.0.1 --port 8001
 Naratto reads `ACESTEP_BASE_URL` (default `http://127.0.0.1:8001`). Open a project, generate a story, then **Generate music**. One track covers the full runtime and follows every scene in order. Horror background sends an instrumental prompt and empty lyrics. Kids stories and full songs send the complete original lyrics and `audio_duration`. A failed ACE-Step task (`status` 2) fails that music job. If the log mentions vLLM on AMD, set `ACESTEP_LM_BACKEND=pt` and restart ACE-Step.
 
 Unload ComfyUI before music if it is running. Naratto calls `POST /free` on `COMFYUI_BASE_URL` before the first ACE-Step request. A stopped ComfyUI does not block music.
+
+### Qwen-Image-2.1 scene images (ComfyUI)
+
+Scene pictures are drawn by ComfyUI on port 8188. Naratto posts the API workflow in `backend/configs/workflows/qwen_image_2_1_t2i.json`. Do not point this at vLLM, and do not put ComfyUI on port 8000. Port 8000 is the Naratto API. Port 8001 is ACE-Step.
+
+Use a ROCm build of ComfyUI 0.37.0 or newer on the RX 9060 XT. The CUDA portable package cannot drive that GPU. The nodes `UNETLoader`, `CLIPLoader`, `VAELoader`, `TextEncodeQwenImage21`, `EmptyLatentImage`, `KSampler`, `VAEDecode`, and `SaveImage` ship with ComfyUI. A missing node fails that image job and names the class to install.
+
+Download the official INT8 weights from [Comfy-Org/Qwen-Image-2.1](https://huggingface.co/Comfy-Org/Qwen-Image-2.1) into the ComfyUI model folders:
+
+| File | Folder |
+|------|--------|
+| `qwen_image_2.1_int8_convrot.safetensors` | `models/diffusion_models/` |
+| `qwen3vl_8b_int8_convrot.safetensors` | `models/text_encoders/` |
+| `qwen_image_2.1_vae_bf16.safetensors` | `models/vae/` |
+
+The diffusion model is about 6.8 GB and the text encoder is about 8.7 GB. Together they are larger than 16 GB of VRAM, so leave ComfyUI’s dynamic VRAM loader on. Do not pass `--highvram`, `--gpu-only`, or `--disable-dynamic-vram`. The 64 GB of system RAM holds the weights that do not fit.
+
+Start ComfyUI on `127.0.0.1:8188` when it runs on the same machine as Naratto. If ComfyUI is on the AMD PC and Naratto stays on another computer, start ComfyUI on `0.0.0.0:8188` and set `COMFYUI_BASE_URL` to that PC’s LAN address. Then start the Naratto API and one Celery worker that listens to `tts,default,render`. Restart the worker after this code is in place. The image task uses the `default` queue. In the app, generate a story, then **Generate scene images**. Each scene prompt becomes one slide picture. A failed scene is recorded and the other scenes still save. **Regenerate scene images** draws them again. When the batch finishes, Naratto calls `POST /free` so music or Wan can use the GPU.
+
+`IMAGE_MAX_SIDE` defaults to 1024. A 16:9 project is drawn at 1024×576, then fitted to the project frame. To use a GGUF diffusion file instead, replace both `IMAGE_WORKFLOW` and `IMAGE_WORKFLOW_MAP` with a graph you exported from that ComfyUI in API format. The shipped graph stays on the native `UNETLoader`.
 
 ### Wan2.1 Image-to-Video (AI Motion)
 

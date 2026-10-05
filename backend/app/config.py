@@ -27,6 +27,16 @@ class Settings(BaseSettings):
     openrouter_site_url: str = "http://localhost:3000"
     openrouter_app_name: str = "Naratto"
     comfyui_base_url: str = "http://127.0.0.1:8188"
+    comfyui_timeout_s: float = 900
+    comfyui_poll_s: float = 2
+    image_workflow: str = "configs/workflows/qwen_image_2_1_t2i.json"
+    image_workflow_map: str = "configs/workflows/qwen_image_2_1_t2i.map.json"
+    image_model: str = "qwen_image_2.1_int8_convrot.safetensors"
+    image_clip: str = "qwen3vl_8b_int8_convrot.safetensors"
+    image_vae: str = "qwen_image_2.1_vae_bf16.safetensors"
+    image_steps: int = 25
+    image_cfg: float = 1.0
+    image_max_side: int = 1024
     wan_budget_ratio: float = 0.25
     wan_clip_min_seconds: float = 5
     wan_clip_max_seconds: float = 10
