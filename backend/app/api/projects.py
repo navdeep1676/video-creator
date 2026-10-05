@@ -29,6 +29,7 @@ from app.services.media_tokens import signed_url_path
 from app.services.music_job import latest_job, music_storage_key
 from app.services.openrouter_catalog import load_catalog
 from app.services.story_job import build_llm_provider, execute_story_job, latest_story_job
+from app.services.story_slides import replace_project_slides
 from app.schemas.common import ListResponse, ProjectCreate, ProjectOut, ProjectUpdate
 from app.services.aspect_ratios import project_aspect_ratio, resolve_aspect_ratio
 from app.utils.exceptions import AppError
@@ -441,6 +442,24 @@ def get_story(
         "locations": [_location_out(row) for row in locations],
         "scenes": scenes,
     }
+
+
+@router.post("/{project_id}/story/slides")
+def build_story_slides(
+    project_id: UUID,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Replace project slides with one slide per saved story scene."""
+    project = get_owned_project(db, project_id, user)
+    scene_rows = list(
+        db.scalars(select(StoryScene).where(StoryScene.project_id == project.id).order_by(StoryScene.index)).all()
+    )
+    if not scene_rows:
+        raise AppError("VALIDATION", "Generate a story before creating slides", 400)
+    count = replace_project_slides(db, project, scene_rows)
+    db.commit()
+    return {"slides": count}
 
 
 @router.post("/{project_id}/story", status_code=202)

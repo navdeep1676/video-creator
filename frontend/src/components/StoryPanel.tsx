@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Alert,
@@ -128,8 +128,32 @@ export default function StoryPanel({ projectId, defaultTopic }: { projectId: str
     onError: (error) => setFormError(errMessage(error)),
   });
 
+  const slidesQuery = useQuery({
+    queryKey: ["slides", projectId],
+    queryFn: async () =>
+      (await api.get(`/projects/${projectId}/slides`)).data as {
+        image_count?: number;
+        narration?: { text?: string } | null;
+      }[],
+  });
+
+  const buildSlides = useMutation({
+    mutationFn: async () => (await api.post(`/projects/${projectId}/story/slides`)).data as { slides: number },
+    onSuccess: async () => {
+      setFormError("");
+      await qc.invalidateQueries({ queryKey: ["slides", projectId] });
+    },
+    onError: (error) => setFormError(errMessage(error)),
+  });
+
   const story = storyQuery.data?.story;
   const scenes = storyQuery.data?.scenes ?? [];
+  const slides = slidesQuery.data ?? [];
+  const slidesBlank = slides.every(
+    (slide) => !(slide.narration?.text || "").trim() && (slide.image_count || 0) === 0
+  );
+  const slidesMatch = scenes.length > 0 && slides.length === scenes.length;
+  const builtSlides = useRef(false);
   const job = storyQuery.data?.job;
   const planning = job?.status === "queued" || job?.status === "running" || generate.isPending;
   const musicJob = storyQuery.data?.music?.job;
@@ -137,6 +161,23 @@ export default function StoryPanel({ projectId, defaultTopic }: { projectId: str
   const models = modelsQuery.data?.models ?? [];
   const audioSrc = mediaUrl(storyQuery.data?.music?.audio_url);
   const videoCount = scenes.filter((scene) => scene.generation_mode === "video").length;
+  const jobStatus = job?.status ?? null;
+  const previousJobStatus = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (previousJobStatus.current && previousJobStatus.current !== "succeeded" && jobStatus === "succeeded") {
+      void qc.invalidateQueries({ queryKey: ["slides", projectId] });
+    }
+    previousJobStatus.current = jobStatus;
+  }, [jobStatus, projectId, qc]);
+
+  useEffect(() => {
+    if (planning || !story || scenes.length === 0 || !slidesQuery.isSuccess || slidesMatch) return;
+    if (slides.length > 0 && !slidesBlank) return;
+    if (buildSlides.isPending || builtSlides.current) return;
+    builtSlides.current = true;
+    buildSlides.mutate();
+  }, [planning, story, scenes.length, slidesQuery.isSuccess, slidesMatch, slides.length, slidesBlank, buildSlides]);
 
   return (
     <Stack spacing={2}>
@@ -270,9 +311,20 @@ export default function StoryPanel({ projectId, defaultTopic }: { projectId: str
                     <Chip size="small" label={`${videoCount} video · ${scenes.length - videoCount} image`} />
                   </Stack>
                 </Stack>
-                <Button variant="outlined" onClick={() => setReviewOpen(true)} sx={{ flexShrink: 0 }}>
-                  Review story
-                </Button>
+                <Stack direction="row" spacing={1} sx={{ flexShrink: 0 }}>
+                  {!slidesMatch && (
+                    <Button
+                      variant="contained"
+                      disabled={planning || buildSlides.isPending}
+                      onClick={() => buildSlides.mutate()}
+                    >
+                      {buildSlides.isPending ? "Creating slides…" : "Create slides"}
+                    </Button>
+                  )}
+                  <Button variant="outlined" onClick={() => setReviewOpen(true)}>
+                    Review story
+                  </Button>
+                </Stack>
               </Stack>
             )}
           </Stack>

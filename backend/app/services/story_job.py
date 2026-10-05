@@ -15,6 +15,7 @@ from app.db.models import Project, Story, StoryCharacter, StoryJob, StoryLocatio
 from app.db.session import SessionLocal
 from app.services.openrouter_llm import LLMProvider, OpenRouterLLMProvider
 from app.services.story_planner import StoryPlan, plan_story, plan_to_json
+from app.services.story_slides import replace_project_slides
 from app.services.storage import get_storage
 
 logger = logging.getLogger(__name__)
@@ -137,6 +138,13 @@ def save_story(session: Session, project: Project, plan: StoryPlan) -> None:
     storage.put_bytes(f"{prefix}/story.json", plan_to_json(plan).encode("utf-8"))
     narration = "\n".join(scene.narration.strip() for scene in plan.scenes)
     storage.put_bytes(f"{prefix}/narration.txt", (narration + "\n").encode("utf-8"))
+    session.flush()
+    scene_rows = list(
+        session.scalars(
+            select(StoryScene).where(StoryScene.project_id == project.id).order_by(StoryScene.index)
+        ).all()
+    )
+    replace_project_slides(session, project, scene_rows)
 
 
 def latest_story_job(session: Session, project_id: uuid.UUID) -> StoryJob | None:
