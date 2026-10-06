@@ -13,6 +13,8 @@ from sqlalchemy.orm import Session
 from app.config import Settings, get_settings
 from app.db.models import Project, Story, StoryCharacter, StoryJob, StoryLocation, StoryScene
 from app.db.session import SessionLocal
+from app.services.gemini_llm import GeminiLLMProvider, is_gemini_model
+from app.services.openai_llm import OpenAILLMProvider, is_openai_model
 from app.services.openrouter_llm import LLMProvider, OpenRouterLLMProvider
 from app.services.story_planner import StoryPlan, plan_story, plan_to_json
 from app.services.story_slides import replace_project_slides
@@ -24,6 +26,12 @@ logger = logging.getLogger(__name__)
 def build_llm_provider(settings: Settings, model: str, override: LLMProvider | None = None) -> LLMProvider:
     if override is not None:
         return override
+    if is_gemini_model(model):
+        tuned = settings.model_copy(update={"gemini_model": model})
+        return GeminiLLMProvider(tuned)
+    if is_openai_model(model):
+        tuned = settings.model_copy(update={"openai_model": model})
+        return OpenAILLMProvider(tuned)
     tuned = settings.model_copy(update={"openrouter_model": model})
     return OpenRouterLLMProvider(tuned)
 

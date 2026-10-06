@@ -26,6 +26,12 @@ class Settings(BaseSettings):
     openrouter_catalog: str = "live"
     openrouter_site_url: str = "http://localhost:3000"
     openrouter_app_name: str = "Naratto"
+    gemini_api_key: str = ""
+    gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta"
+    gemini_model: str = "gemini-3.5-flash"
+    openai_api_key: str = ""
+    openai_base_url: str = "https://api.openai.com/v1"
+    openai_model: str = "gpt-5.4-mini"
     comfyui_base_url: str = "http://127.0.0.1:8188"
     comfyui_timeout_s: float = 900
     comfyui_poll_s: float = 2

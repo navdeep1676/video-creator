@@ -27,6 +27,8 @@ from app.db.session import get_db
 from app.dependencies import get_current_user
 from app.services.media_tokens import signed_url_path
 from app.services.music_job import latest_job, music_storage_key
+from app.services.gemini_llm import gemini_catalog_rows
+from app.services.openai_llm import openai_catalog_rows
 from app.services.openrouter_catalog import load_catalog
 from app.services.story_job import build_llm_provider, execute_story_job, latest_story_job
 from app.services.story_slides import replace_project_slides
@@ -487,8 +489,11 @@ def enqueue_story(
     settings = get_settings()
     catalog = load_catalog(settings)
     model = body.llm_model or settings.openrouter_model
-    if model not in catalog.ids():
-        raise AppError("VALIDATION", "Choose a free text model from the catalog", 400)
+    allowed = catalog.ids() | {row["id"] for row in gemini_catalog_rows(settings)} | {
+        row["id"] for row in openai_catalog_rows(settings)
+    }
+    if model not in allowed:
+        raise AppError("VALIDATION", "Choose a text model from the catalog", 400)
     active = db.scalar(
         select(StoryJob).where(
             StoryJob.project_id == project.id,

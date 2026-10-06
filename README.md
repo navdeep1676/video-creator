@@ -13,7 +13,7 @@
 - Async Deepgram TTS (mock mode without API key)
 - Background FFmpeg render (fade + concat timeline, subtitles, optional BGM)
 - Download MP4 + signed media URLs for preview
-- Original horror and kids stories from OpenRouter (`POST /api/v1/projects/{id}/story`). Set `OPENROUTER_API_KEY` in `.env`. Free text models are listed at `/api/v1/models`.
+- Original horror and kids stories from OpenRouter, Gemini, or OpenAI (`POST /api/v1/projects/{id}/story`). Set `OPENROUTER_API_KEY`, `GEMINI_API_KEY`, or `OPENAI_API_KEY` in `.env`. Models are listed at `/api/v1/models`.
 - Local ACE-Step 1.5 music (`POST /api/v1/projects/{id}/music/generate`) once a story exists. The ACE-Step server stays on port 8001. `music_mode=none` skips it.
 - Local Qwen-Image-2.1 scene stills through ComfyUI (`POST /api/v1/projects/{id}/images/generate`). ComfyUI stays on port 8188.
 

@@ -87,13 +87,19 @@ def create_app() -> FastAPI:
     def list_models() -> dict:
         from app.services.openrouter_catalog import load_catalog
 
+        from app.services.gemini_llm import gemini_catalog_rows
+        from app.services.openai_llm import openai_catalog_rows
+
         catalog = load_catalog(settings)
+        openrouter = [{**row, "provider": row.get("provider") or "openrouter"} for row in catalog.models]
         return {
             "source": catalog.source,
             "default_model": catalog.default_model,
             "default_model_is_free": catalog.default_model in catalog.ids(),
             "key_configured": bool(settings.openrouter_api_key),
-            "models": catalog.models,
+            "gemini_key_configured": bool(settings.gemini_api_key),
+            "openai_key_configured": bool(settings.openai_api_key),
+            "models": openai_catalog_rows(settings) + gemini_catalog_rows(settings) + openrouter,
         }
 
     @app.get(f"{settings.api_prefix}/gpu")

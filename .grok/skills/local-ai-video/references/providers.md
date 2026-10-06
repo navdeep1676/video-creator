@@ -31,6 +31,38 @@ If `response_format` is rejected (400), retry that call with `{"type": "json_obj
 
 OpenRouter is remote, so it is not a local GPU stage. Do not start ComfyUI or ACE-Step during a story call.
 
+## Gemini
+
+Story model ids that match `gemini-[A-Za-z0-9._-]+` use `GeminiLLMProvider` instead of OpenRouter.
+
+`POST {GEMINI_BASE_URL}/models/{model}:generateContent`
+
+Header: `x-goog-api-key: {GEMINI_API_KEY}`.
+
+Body: `systemInstruction.parts[0].text`, one user `contents` entry, and `generationConfig` with `temperature` 0.7, `maxOutputTokens` 32768, `responseMimeType` `application/json`, and `responseJsonSchema` set to the story schema. If that schema is rejected with HTTP 400, retry the same call without `responseJsonSchema` and print the schema in the system text.
+
+Read text from `candidates[0].content.parts`, skipping parts with `thought: true`. Parse JSON. On invalid JSON, resend once with the error appended. Do not silently switch models.
+
+Missing `GEMINI_API_KEY` raises `ProviderUnavailable` before the HTTP call. `GET /api/v1/models` still lists the Gemini text models. `GEMINI_MODEL` defaults to `gemini-3.5-flash`. A custom id in that variable is added to the catalog when it matches the Gemini id pattern.
+
+Gemini is remote, so it is not a local GPU stage.
+
+## OpenAI
+
+Story model ids that match `gpt-…`, `o` plus a digit (`o3`, `o4-mini`), or `chatgpt-…` use `OpenAILLMProvider`.
+
+`POST {OPENAI_BASE_URL}/chat/completions`
+
+Header: `Authorization: Bearer {OPENAI_API_KEY}`.
+
+Body matches the OpenRouter chat body: `model`, system and user messages, `temperature` 0.7, and `response_format` `json_schema`. If HTTP 400 mentions the schema or `temperature`, retry once without the rejected field. Schema fallback uses `{"type": "json_object"}` and prints the schema in the system message.
+
+Read `choices[0].message.content`. A `refusal` is an invalid reply and retries once. Parse JSON. On invalid JSON, resend once with the error appended. Do not silently switch models.
+
+Missing `OPENAI_API_KEY` raises `ProviderUnavailable` before the HTTP call. `GET /api/v1/models` still lists the OpenAI text models. `OPENAI_MODEL` defaults to `gpt-5.4-mini`. A custom id in that variable is added to the catalog when it matches the OpenAI id pattern.
+
+OpenAI is remote, so it is not a local GPU stage.
+
 Missing `OPENROUTER_API_KEY` raises `ProviderUnavailable` on chat calls. Listing models does not need a key. Tests inject a fake that returns fixture JSON.
 
 ### Free text catalog
@@ -134,7 +166,7 @@ No network TTS. Hindi, English, Hinglish, and male / female / child are voice id
 
 Run in this order for a full generate. Do not overlap them.
 
-1. OpenRouter planning (no local GPU).
+1. LLM planning through OpenRouter, Gemini, or OpenAI (no local GPU).
 2. ComfyUI character references, then scene images. Then `POST /free`.
 3. ComfyUI Wan for `video` scenes only. Then `POST /free`.
 4. ACE-Step. One track per project.

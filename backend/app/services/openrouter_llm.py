@@ -1,4 +1,4 @@
-"""OpenRouter chat completions. This is the only LLM client."""
+"""OpenRouter chat completions."""
 
 from __future__ import annotations
 

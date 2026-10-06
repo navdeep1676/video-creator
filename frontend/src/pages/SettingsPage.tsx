@@ -246,16 +246,23 @@ export default function SettingsPage() {
 
 function ModelCard() {
   const modelsQuery = useQuery({
-    queryKey: ["openrouter-models"],
+    queryKey: ["story-models"],
+    refetchOnMount: "always",
     queryFn: async () =>
       (await api.get("/models")).data as {
         source: string;
         default_model: string;
         key_configured: boolean;
-        models: { id: string; name: string }[];
+        gemini_key_configured?: boolean;
+        openai_key_configured?: boolean;
+        models: { id: string; name: string; provider?: string }[];
       },
   });
   const catalog = modelsQuery.data;
+  const models = catalog?.models ?? [];
+  const openai = models.filter((model) => model.provider === "openai");
+  const gemini = models.filter((model) => model.provider === "gemini");
+  const openRouter = models.filter((model) => model.provider !== "gemini" && model.provider !== "openai");
 
   return (
     <Card sx={{ border: "1px solid", borderColor: "divider", maxWidth: 560 }}>
@@ -264,15 +271,45 @@ function ModelCard() {
           Story models
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-          Story generation uses a free OpenRouter text model. The default is {catalog?.default_model || "openrouter/free"}.
+          Story generation uses OpenAI, Gemini, or a free OpenRouter text model. The default is{" "}
+          {catalog?.default_model || "openrouter/free"}.
         </Typography>
+        {catalog && !catalog.openai_key_configured && (
+          <Alert severity="warning" sx={{ mb: 2 }}>
+            OPENAI_API_KEY is not set. OpenAI models stay in the list.
+          </Alert>
+        )}
+        {catalog && !catalog.gemini_key_configured && (
+          <Alert severity="warning" sx={{ mb: 2 }}>
+            GEMINI_API_KEY is not set. Gemini models stay in the list.
+          </Alert>
+        )}
         {catalog && !catalog.key_configured && (
           <Alert severity="warning" sx={{ mb: 2 }}>
             OPENROUTER_API_KEY is not set. Listing models still works.
           </Alert>
         )}
+        <Typography variant="subtitle2" sx={{ mt: 1 }}>
+          OpenAI
+        </Typography>
+        <Stack spacing={0.5} sx={{ mb: 1.5 }}>
+          {openai.map((model) => (
+            <Typography key={model.id} variant="body2">
+              {model.name}
+            </Typography>
+          ))}
+        </Stack>
+        <Typography variant="subtitle2">Gemini</Typography>
+        <Stack spacing={0.5} sx={{ mb: 1.5 }}>
+          {gemini.map((model) => (
+            <Typography key={model.id} variant="body2">
+              {model.name}
+            </Typography>
+          ))}
+        </Stack>
+        <Typography variant="subtitle2">OpenRouter</Typography>
         <Stack spacing={0.5}>
-          {(catalog?.models ?? []).map((model) => (
+          {openRouter.map((model) => (
             <Typography key={model.id} variant="body2">
               {model.name}
             </Typography>

@@ -7,6 +7,7 @@ import {
   CardContent,
   Chip,
   Drawer,
+  ListSubheader,
   MenuItem,
   Stack,
   TextField,
@@ -21,7 +22,7 @@ import StoryReview, {
   type StoryView,
 } from "./StoryReview";
 
-type FreeModel = { id: string; name: string };
+type FreeModel = { id: string; name: string; provider?: string };
 
 type StoryPayload = {
   settings: {
@@ -65,13 +66,16 @@ export default function StoryPanel({ projectId, defaultTopic }: { projectId: str
   const [reviewOpen, setReviewOpen] = useState(false);
 
   const modelsQuery = useQuery({
-    queryKey: ["openrouter-models"],
+    queryKey: ["story-models"],
     queryFn: async () =>
       (await api.get("/models")).data as {
         default_model: string;
         key_configured: boolean;
+        gemini_key_configured?: boolean;
+        openai_key_configured?: boolean;
         models: FreeModel[];
       },
+    refetchOnMount: "always",
   });
 
   const storyQuery = useQuery({
@@ -176,6 +180,18 @@ export default function StoryPanel({ projectId, defaultTopic }: { projectId: str
   const imageBusy = imageJob?.status === "queued" || imageJob?.status === "running" || generateImages.isPending;
   const redrawExisting = slides.length > 0 && slides.every((slide) => (slide.image_count || 0) > 0);
   const models = modelsQuery.data?.models ?? [];
+  const openaiModels = models.filter((item) => item.provider === "openai");
+  const geminiModels = models.filter((item) => item.provider === "gemini");
+  const openRouterModels = models.filter((item) => item.provider !== "gemini" && item.provider !== "openai");
+  const selectedModel = models.find((item) => item.id === model);
+  const missingGeminiKey = selectedModel?.provider === "gemini" && !modelsQuery.data?.gemini_key_configured;
+  const missingOpenAIKey = selectedModel?.provider === "openai" && !modelsQuery.data?.openai_key_configured;
+  const missingOpenRouterKey =
+    !!selectedModel &&
+    selectedModel.provider !== "gemini" &&
+    selectedModel.provider !== "openai" &&
+    modelsQuery.data &&
+    !modelsQuery.data.key_configured;
   const audioSrc = mediaUrl(storyQuery.data?.music?.audio_url);
   const videoCount = scenes.filter((scene) => scene.generation_mode === "video").length;
   const jobStatus = job?.status ?? null;
@@ -221,11 +237,17 @@ export default function StoryPanel({ projectId, defaultTopic }: { projectId: str
               </Typography>
             </Stack>
             <Typography variant="body2" color="text.secondary">
-              OpenRouter writes an original horror story or kids song, then splits it into scenes. Wan clips stay inside
-              about a quarter of the runtime.
+              OpenRouter, Gemini, or OpenAI writes an original horror story or kids song, then splits it into scenes. Wan
+              clips stay inside about a quarter of the runtime.
             </Typography>
-            {modelsQuery.data && !modelsQuery.data.key_configured && (
+            {missingOpenRouterKey && (
               <Alert severity="warning">Add OPENROUTER_API_KEY to the environment before generating a story.</Alert>
+            )}
+            {missingGeminiKey && (
+              <Alert severity="warning">Add GEMINI_API_KEY to the environment before generating a story with Gemini.</Alert>
+            )}
+            {missingOpenAIKey && (
+              <Alert severity="warning">Add OPENAI_API_KEY to the environment before generating a story with OpenAI.</Alert>
             )}
             {formError && (
               <Alert severity="error" onClose={() => setFormError("")}>
@@ -277,8 +299,27 @@ export default function StoryPanel({ projectId, defaultTopic }: { projectId: str
                 value={model}
                 onChange={(e) => setModel(e.target.value)}
                 fullWidth
+                SelectProps={{
+                  MenuProps: {
+                    variant: "menu",
+                    PaperProps: { sx: { maxHeight: 360 } },
+                  },
+                }}
               >
-                {models.map((item) => (
+                {openaiModels.length > 0 && <ListSubheader>OpenAI</ListSubheader>}
+                {openaiModels.map((item) => (
+                  <MenuItem key={item.id} value={item.id}>
+                    {item.name}
+                  </MenuItem>
+                ))}
+                {geminiModels.length > 0 && <ListSubheader>Gemini</ListSubheader>}
+                {geminiModels.map((item) => (
+                  <MenuItem key={item.id} value={item.id}>
+                    {item.name}
+                  </MenuItem>
+                ))}
+                {openRouterModels.length > 0 && <ListSubheader>OpenRouter</ListSubheader>}
+                {openRouterModels.map((item) => (
                   <MenuItem key={item.id} value={item.id}>
                     {item.name}
                   </MenuItem>
