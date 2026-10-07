@@ -40,7 +40,7 @@ def test_duration_is_at_least_one_second():
 
 def test_video_scene_uses_wan_and_keeps_the_motion_line():
     scene = SimpleNamespace(generation_mode="video", video_prompt="the lamp flares", image_prompt="a lamp")
-    assert slide_animation("video") == "wan_i2v"
+    assert slide_animation("video") == "wan_t2v"
     assert motion_prompt(scene) == "the lamp flares"
     assert slide_transition("crossfade") == "fade"
     assert slide_transition("cut") == "none"

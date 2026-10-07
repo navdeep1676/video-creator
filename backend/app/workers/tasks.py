@@ -223,9 +223,9 @@ def render_video(self, job_id: str) -> dict:
                 raise NonRetryableTaskError("VALIDATION", f"Slide {s.id} missing ready TTS audio")
             audio_path = storage.absolute_path(n.audio_key)
             anim = s.animation or "none"
-            if anim == "wan_i2v" and not settings.wan_i2v_enabled:
-                # Fall back so export still works when feature is disabled
-                anim = "ken_burns"
+            # Wan2.1 image-to-video is the 14B checkpoint. This GPU uses the 1.3B text model.
+            if anim == "wan_i2v":
+                anim = "wan_t2v"
             if anim == "wan_t2v" and not settings.wan_t2v_enabled:
                 anim = "ken_burns"
             entries = s.all_image_entries()

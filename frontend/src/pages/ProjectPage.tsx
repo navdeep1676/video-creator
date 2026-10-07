@@ -169,40 +169,6 @@ function WanT2vBanner() {
   );
 }
 
-function WanI2vBanner() {
-  const { data } = useQuery({
-    queryKey: ["wan-i2v-status"],
-    queryFn: async () => (await api.get("/video/wan-i2v/status")).data as WanI2vStatus,
-    staleTime: 30_000,
-  });
-  if (!data) return null;
-  if (data.real_ai) {
-    return (
-      <Alert severity="success" variant="outlined">
-        Real Wan2.1 AI motion is active via <strong>{data.backend}</strong>. Export may take a few
-        minutes per image while the cloud model generates video.
-      </Alert>
-    );
-  }
-  if (data.mock) {
-    return (
-      <Alert severity="warning" variant="outlined">
-        <strong>Mock mode</strong> — you will only get a slow zoom (not real AI video). Add{" "}
-        <code>FAL_KEY</code> from{" "}
-        <a href="https://fal.ai/models/fal-ai/wan-i2v" target="_blank" rel="noreferrer">
-          fal.ai/wan-i2v
-        </a>{" "}
-        to <code>.env</code>, set <code>WAN_I2V_MOCK=false</code>, and restart Docker.
-      </Alert>
-    );
-  }
-  return (
-    <Alert severity="error" variant="outlined">
-      Wan2.1 is not configured for real AI video. {data.error || data.hint || "Set FAL_KEY in .env."}
-    </Alert>
-  );
-}
-
 function isDraftDirty(draft: Draft, slide: Slide | null | undefined): boolean {
   if (!slide || draft.slideId !== slide.id) return false;
   const base = draftFromSlide(slide);
@@ -1259,14 +1225,14 @@ export default function ProjectPage() {
                     >
                       <MenuItem value="none">None (static)</MenuItem>
                       <MenuItem value="ken_burns">Ken Burns (slow zoom)</MenuItem>
-                      <MenuItem value="wan_i2v">AI Motion (Wan2.1 I2V)</MenuItem>
+                      <MenuItem value="wan_i2v">AI Motion (Wan2.1 1.3B)</MenuItem>
                       <MenuItem value="wan_t2v">Text to video (Wan2.1 T2V 1.3B)</MenuItem>
                     </Select>
                   </FormControl>
                 </Stack>
                 {(draft.animation === "wan_i2v" || draft.animation === "wan_t2v") && (
                   <>
-                    {draft.animation === "wan_t2v" ? <WanT2vBanner /> : <WanI2vBanner />}
+                    <WanT2vBanner />
                     <TextField
                       label={draft.animation === "wan_t2v" ? "Video prompt (Wan2.1 T2V 1.3B)" : "Motion prompt (Wan2.1)"}
                       value={draft.motion_prompt}

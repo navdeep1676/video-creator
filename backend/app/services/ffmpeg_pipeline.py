@@ -105,6 +105,17 @@ class RenderResult:
 ProgressCb = Callable[[int, str], None]
 
 
+def escape_subtitles_filter_path(path: Path) -> str:
+    """Escape a caption path for the ffmpeg subtitles filter.
+
+    The filtergraph parser consumes one backslash, then the option parser
+    splits on ':'. A Windows drive letter needs two backslashes, or the rest
+    of the path is read as original_size.
+    """
+    text = str(path.resolve()).replace("\\", "/")
+    return text.replace(":", "\\\\:").replace("'", "\\\\'")
+
+
 def _render_wan_t2v_segment(
     slide: SlideMedia,
     seg: Path,
@@ -129,7 +140,7 @@ def _render_wan_t2v_segment(
         frame_height=options.height,
         progress_cb=lambda message: progress(
             10 + int(30 * (index + 1) / max(n_slides, 1)),
-            f"wan_t2v:{message[:40]}",
+            f"wan_t2v:{message[:80]}",
         ),
     )
     fi, fo = 0.0, 0.0
@@ -562,9 +573,7 @@ def render_project_video(
     final_tmp = work_dir / "output.mp4"
     mux_args = ["-i", str(video_silent), "-i", str(audio_mix)]
     if ass_path and ass_path.is_file() and ffmpeg_supports_subtitles():
-        # Escape path for libass subtitles filter
-        ass_escaped = str(ass_path.resolve()).replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
-        mux_args += ["-vf", f"subtitles={ass_escaped}"]
+        mux_args += ["-vf", f"subtitles={escape_subtitles_filter_path(ass_path)}"]
     mux_args += [
         "-map",
         "0:v:0",

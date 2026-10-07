@@ -31,7 +31,8 @@ def slide_transition(value: str) -> str:
 
 
 def slide_animation(generation_mode: str) -> str:
-    return "wan_i2v" if generation_mode == "video" else "ken_burns"
+    # Video scenes use Wan2.1 T2V 1.3B. The I2V checkpoint is 14B and is not used here.
+    return "wan_t2v" if generation_mode == "video" else "ken_burns"
 
 
 def motion_prompt(scene: StoryScene) -> str | None:
