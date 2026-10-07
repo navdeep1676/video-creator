@@ -200,7 +200,11 @@ def _clock(value: Any) -> str:
 def ensure_wav(data: bytes, ffmpeg: str = "ffmpeg") -> bytes:
     if len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WAVE":
         return data
-    program = shutil.which(ffmpeg) or ffmpeg
+    from app.utils.media import tool_path
+
+    program = ffmpeg
+    if not program or program == "ffmpeg" or not Path(program).is_file():
+        program = tool_path("ffmpeg")
     with tempfile.TemporaryDirectory() as tmp:
         folder = Path(tmp)
         source = folder / "source.bin"

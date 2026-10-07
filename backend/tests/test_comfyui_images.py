@@ -15,6 +15,8 @@ from app.services.comfyui import (
     ComfyUIImageProvider,
     ImageGenerationError,
     build_prompt_graph,
+    format_comfy_error,
+    missing_weight_files,
     qwen_canvas,
 )
 from app.services.image_job import _draw_project
@@ -115,6 +117,53 @@ def test_download_uses_filename_subfolder_and_type():
     assert params["filename"] == "Naratto_00001_.png"
     assert params["subfolder"] == "Naratto"
     assert params["type"] == "output"
+
+
+def test_http_400_keeps_the_comfy_validation_detail():
+    message = format_comfy_error(
+        "/prompt",
+        400,
+        {
+            "error": {"message": "Prompt outputs failed validation"},
+            "node_errors": {
+                "1": {
+                    "errors": [
+                        {
+                            "message": "Value not in list",
+                            "details": "unet_name: 'qwen_image_2.1_int8_convrot.safetensors' not in []",
+                        }
+                    ]
+                }
+            },
+        },
+    )
+    assert "unet_name" in message
+    assert "400" in message
+
+
+def test_empty_model_lists_name_the_missing_weights():
+    info = {
+        "UNETLoader": {"input": {"required": {"unet_name": [[], {}]}}},
+        "CLIPLoader": {"input": {"required": {"clip_name": [[], {}]}}},
+        "VAELoader": {"input": {"required": {"vae_name": [["pixel_space"], {}]}}},
+    }
+    missing = missing_weight_files(info, _settings())
+    assert "models/diffusion_models/qwen_image_2.1_int8_convrot.safetensors" in missing
+    assert "models/text_encoders/qwen3vl_8b_int8_convrot.safetensors" in missing
+    assert "models/vae/qwen_image_2.1_vae_bf16.safetensors" in missing
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/object_info":
+            body = {name: {} for name in REQUIRED_NODES}
+            body.update(info)
+            return httpx.Response(200, json=body)
+        if request.url.path == "/prompt":
+            return httpx.Response(200, json={"prompt_id": "should-not-post"})
+        return httpx.Response(404, json={})
+
+    provider = _provider(handler)
+    with pytest.raises(ImageGenerationError, match="missing Qwen-Image-2.1 weights"):
+        provider.generate({})
 
 
 def test_node_errors_fail_the_prompt():

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link as RouterLink, useParams } from "react-router-dom";
+import { Link as RouterLink, useParams, useSearchParams } from "react-router-dom";
 import {
   Alert,
   Box,
@@ -10,12 +10,16 @@ import {
   CardContent,
   Chip,
   Collapse,
+  FormControl,
   FormControlLabel,
+  InputLabel,
   LinearProgress,
   List,
   ListItem,
   ListItemIcon,
   ListItemText,
+  MenuItem,
+  Select,
   Stack,
   Switch,
   Typography,
@@ -33,6 +37,8 @@ import SmartDisplayOutlinedIcon from "@mui/icons-material/SmartDisplayOutlined";
 import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import ChecklistRtlIcon from "@mui/icons-material/ChecklistRtl";
+import VideoLibraryIcon from "@mui/icons-material/VideoLibrary";
+import Filter1Icon from "@mui/icons-material/Filter1";
 import { api, errMessage, mediaUrl } from "../api/client";
 import PageHeader from "../components/PageHeader";
 import type { Project } from "../types/project";
@@ -52,12 +58,21 @@ type Job = {
   height?: number | null;
   quality?: string | null;
   caption_style?: string | null;
+  slide_id?: string | null;
+  slide_order?: number | null;
   error_code: string | null;
   error_message: string | null;
 };
 
 type QualityId = "draft" | "full";
 type CaptionStyleId = "auto" | "youtube" | "shorts";
+type RenderScope = "all" | "one";
+
+type ExportSlide = {
+  id: string;
+  order_index: number;
+  narration?: { text?: string | null } | null;
+};
 
 type ExportCheckIssue = {
   slide_id?: string | null;
@@ -100,6 +115,18 @@ type CaptionStyle = {
   best_for: string[];
 };
 
+function slideLabel(slide: ExportSlide): string {
+  const text = (slide.narration?.text || "").replace(/\s+/g, " ").trim();
+  const preview = text.length > 42 ? `${text.slice(0, 42)}…` : text;
+  return preview ? `Slide ${slide.order_index + 1} — ${preview}` : `Slide ${slide.order_index + 1}`;
+}
+
+function jobScopeLabel(job: Job): string {
+  if (job.slide_order) return `Slide ${job.slide_order}`;
+  if (job.slide_id) return "One slide";
+  return "All slides";
+}
+
 function draftCanvas(w: number, h: number): { width: number; height: number } {
   const short = Math.min(w, h);
   const scale = 720 / short;
@@ -123,8 +150,12 @@ const CAPTION_ICONS: Record<CaptionStyleId, React.ReactNode> = {
 
 export default function ExportPage() {
   const { projectId = "" } = useParams();
+  const [searchParams] = useSearchParams();
   const qc = useQueryClient();
+  const requestedSlide = searchParams.get("slide");
   const [jobId, setJobId] = useState<string | null>(null);
+  const [scope, setScope] = useState<RenderScope>(requestedSlide ? "one" : "all");
+  const [slideId, setSlideId] = useState(requestedSlide || "");
   const [includeSubtitles, setIncludeSubtitles] = useState(true);
   const [captionStyle, setCaptionStyle] = useState<CaptionStyleId>("auto");
   const [quality, setQuality] = useState<QualityId>("full");
@@ -153,6 +184,11 @@ export default function ExportPage() {
     queryFn: async () => (await api.get(`/projects/${projectId}`)).data as Project,
   });
 
+  const slidesQuery = useQuery({
+    queryKey: ["slides", projectId],
+    queryFn: async () => (await api.get(`/projects/${projectId}/slides`)).data as ExportSlide[],
+  });
+
   const storyMusicQuery = useQuery({
     queryKey: ["story", projectId],
     queryFn: async () =>
@@ -162,10 +198,18 @@ export default function ExportPage() {
       },
   });
 
+  const slides = slidesQuery.data || [];
+  const renderSlideId = scope === "one" ? slideId || null : null;
+
   const readinessQuery = useQuery({
-    queryKey: ["export-readiness", projectId],
+    queryKey: ["export-readiness", projectId, renderSlideId],
+    enabled: scope === "all" || !!renderSlideId,
     queryFn: async () =>
-      (await api.get(`/video/projects/${projectId}/export-readiness`)).data as ExportReadiness,
+      (
+        await api.get(`/video/projects/${projectId}/export-readiness`, {
+          params: renderSlideId ? { slide_id: renderSlideId } : {},
+        })
+      ).data as ExportReadiness,
     refetchInterval: (q) => {
       const data = q.state.data;
       if (!data) return 4000;
@@ -190,6 +234,15 @@ export default function ExportPage() {
 
   const readiness = readinessQuery.data;
   const exportReady = !!readiness?.ready;
+  const selectedSlide = slides.find((s) => s.id === slideId) || null;
+
+  useEffect(() => {
+    if (!slides.length) return;
+    if (slideId && slides.some((s) => s.id === slideId)) return;
+    const fromUrl =
+      requestedSlide && slides.some((s) => s.id === requestedSlide) ? requestedSlide : slides[0].id;
+    setSlideId(fromUrl);
+  }, [slides, slideId, requestedSlide]);
 
   // Prefer recommended caption style once readiness loads
   useEffect(() => {
@@ -205,6 +258,7 @@ export default function ExportPage() {
     mutationFn: async () => {
       const { data } = await api.post("/video/render", {
         project_id: projectId,
+        slide_id: renderSlideId,
         include_subtitles: includeSubtitles,
         caption_style: includeSubtitles ? captionStyle : "auto",
         aspect_ratio: aspect.id,
@@ -348,7 +402,9 @@ export default function ExportPage() {
                 )}
               </Stack>
               <Typography variant="body2" color="text.secondary">
-                Checks missing images, empty narration, and TTS status before you start a render.
+                {scope === "one"
+                  ? "Checks this slide’s image, narration, and voice before a single-slide video."
+                  : "Checks missing images, empty narration, and TTS status before you start a render."}
               </Typography>
             </Box>
             <Button
@@ -372,7 +428,17 @@ export default function ExportPage() {
           {readiness && (
             <>
               <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap sx={{ mb: 2 }}>
-                <Chip size="small" variant="outlined" label={`${readiness.slide_count} slides`} />
+                <Chip
+                  size="small"
+                  variant="outlined"
+                  label={
+                    scope === "one"
+                      ? selectedSlide
+                        ? `Slide ${selectedSlide.order_index + 1} only`
+                        : "One slide"
+                      : `${readiness.slide_count} slides`
+                  }
+                />
                 <Chip
                   size="small"
                   color={readiness.summary.missing_images ? "error" : "default"}
@@ -485,6 +551,87 @@ export default function ExportPage() {
                 <Chip color="primary" label={aspect.label} />
                 <Chip variant="outlined" label={`${canvasW}×${canvasH} full`} />
               </Stack>
+            </Box>
+
+            <Box>
+              <Typography variant="subtitle1" fontWeight={700} gutterBottom>
+                What to render
+              </Typography>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+                A full video joins every slide. A single-slide video exports only the slide you pick.
+              </Typography>
+              <Box
+                sx={{
+                  display: "grid",
+                  gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" },
+                  gap: 1.5,
+                }}
+              >
+                {(
+                  [
+                    {
+                      id: "all" as const,
+                      title: "Full video",
+                      body: "Every slide, in order, as one MP4.",
+                      icon: <VideoLibraryIcon color="primary" />,
+                    },
+                    {
+                      id: "one" as const,
+                      title: "One slide",
+                      body: "Render a single slide as its own video.",
+                      icon: <Filter1Icon color="primary" />,
+                    },
+                  ] as const
+                ).map((opt) => {
+                  const selected = scope === opt.id;
+                  return (
+                    <Card
+                      key={opt.id}
+                      variant="outlined"
+                      sx={{
+                        borderColor: selected ? "primary.main" : "divider",
+                        borderWidth: selected ? 2 : 1,
+                        bgcolor: selected ? "action.selected" : "background.paper",
+                      }}
+                    >
+                      <CardActionArea
+                        onClick={() => setScope(opt.id)}
+                        disabled={jobRunning}
+                        sx={{ height: "100%" }}
+                      >
+                        <CardContent sx={{ display: "flex", gap: 1.5, alignItems: "flex-start" }}>
+                          {opt.icon}
+                          <Box>
+                            <Typography variant="body1" fontWeight={700}>
+                              {opt.title}
+                            </Typography>
+                            <Typography variant="caption" color="text.secondary">
+                              {opt.body}
+                            </Typography>
+                          </Box>
+                        </CardContent>
+                      </CardActionArea>
+                    </Card>
+                  );
+                })}
+              </Box>
+              {scope === "one" && (
+                <FormControl fullWidth sx={{ mt: 1.5 }} disabled={jobRunning || slides.length === 0}>
+                  <InputLabel id="export-slide-label">Slide</InputLabel>
+                  <Select
+                    labelId="export-slide-label"
+                    label="Slide"
+                    value={slides.some((s) => s.id === slideId) ? slideId : ""}
+                    onChange={(e) => setSlideId(e.target.value)}
+                  >
+                    {slides.map((s) => (
+                      <MenuItem key={s.id} value={s.id}>
+                        {slideLabel(s)}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              )}
             </Box>
 
             <Box>
@@ -681,8 +828,9 @@ export default function ExportPage() {
 
             {storyMusicQuery.data?.music?.audio_url && storyMusicQuery.data?.settings?.music_mode !== "none" && (
               <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-                Generated music is mixed under the narration for the full video. Scene length stays at the story
-                plan when the spoken line is shorter, so the picture and the music end together.
+                {scope === "one"
+                  ? "Generated music is mixed under this slide and trimmed to its length, starting from the beginning of the track."
+                  : "Generated music is mixed under the narration for the full video. Scene length stays at the story plan when the spoken line is shorter, so the picture and the music end together."}
               </Typography>
             )}
 
@@ -690,14 +838,18 @@ export default function ExportPage() {
               <Button
                 variant="contained"
                 size="large"
-                disabled={renderMutation.isPending || jobRunning || !exportReady}
+                disabled={
+                  renderMutation.isPending || jobRunning || !exportReady || (scope === "one" && !renderSlideId)
+                }
                 onClick={() => renderMutation.mutate()}
               >
                 {!exportReady
                   ? "Fix checklist to generate"
-                  : quality === "draft"
-                    ? `Generate draft (${exportSize.width}×${exportSize.height})`
-                    : `Generate full video (${exportSize.width}×${exportSize.height})`}
+                  : scope === "one"
+                    ? `Generate slide ${selectedSlide ? selectedSlide.order_index + 1 : ""} (${exportSize.width}×${exportSize.height})`
+                    : quality === "draft"
+                      ? `Generate draft (${exportSize.width}×${exportSize.height})`
+                      : `Generate full video (${exportSize.width}×${exportSize.height})`}
               </Button>
               <Button
                 variant="outlined"
@@ -729,6 +881,7 @@ export default function ExportPage() {
               {job.stage ? ` · stage: ${job.stage}` : ""}
               {job.quality ? ` · ${job.quality}` : ""}
               {job.caption_style ? ` · captions: ${job.caption_style}` : ""}
+              {` · ${jobScopeLabel(job)}`}
               {job.aspect_ratio
                 ? ` · ${job.aspect_ratio}${job.width && job.height ? ` (${job.width}×${job.height})` : ""}`
                 : ""}
@@ -777,7 +930,8 @@ export default function ExportPage() {
                     a.href = url;
                     const ratioTag = job.aspect_ratio ? `-${job.aspect_ratio.replace(":", "x")}` : "";
                     const qTag = job.quality === "draft" ? "-draft" : "";
-                    a.download = `video${ratioTag}${qTag}-${job.id.slice(0, 8)}.mp4`;
+                    const slideTag = job.slide_order ? `-slide${job.slide_order}` : "";
+                    a.download = `video${slideTag}${ratioTag}${qTag}-${job.id.slice(0, 8)}.mp4`;
                     a.click();
                     URL.revokeObjectURL(url);
                   }}
@@ -816,6 +970,7 @@ export default function ExportPage() {
                 <Typography variant="body2">
                   {j.id.slice(0, 8)}… · {j.status} · {j.progress}%
                   {j.quality ? ` · ${j.quality}` : ""}
+                  {` · ${jobScopeLabel(j)}`}
                   {j.caption_style ? ` · ${j.caption_style}` : ""}
                   {j.aspect_ratio
                     ? ` · ${j.aspect_ratio}${j.width && j.height ? ` ${j.width}×${j.height}` : ""}`

@@ -15,6 +15,7 @@ from app.db.models import MusicAsset, Narration, Project, Slide, VideoJob
 from app.db.session import SessionLocal
 from app.services.aspect_ratios import DEFAULT_ASPECT_RATIO, canvas_for_quality, resolve_aspect_ratio
 from app.services.duration import effective_duration_ms
+from app.services.export_readiness import slides_for_render
 from app.services.ffmpeg_pipeline import RenderOptions, SlideMedia, render_project_video
 from app.services.music_job import music_storage_key
 from app.services.story_slides import align_story_slide_durations
@@ -175,6 +176,7 @@ def render_video(self, job_id: str) -> dict:
     db = SessionLocal()
     storage = get_storage()
     work_dir = Path(settings.storage_root) / "tmp" / job_id
+    used_t2v = False
     try:
         job = db.get(VideoJob, UUID(job_id))
         if not job:
@@ -196,13 +198,21 @@ def render_video(self, job_id: str) -> dict:
 
         align_story_slide_durations(db, job.project_id)
         db.commit()
-        slides = db.scalars(
-            select(Slide)
-            .options(selectinload(Slide.narration))
-            .where(Slide.project_id == job.project_id)
-            .order_by(Slide.order_index)
-        ).all()
-        if not slides:
+        slides = list(
+            db.scalars(
+                select(Slide)
+                .options(selectinload(Slide.narration))
+                .where(Slide.project_id == job.project_id)
+                .order_by(Slide.order_index)
+            ).all()
+        )
+        opts = job.options or {}
+        slide_id = opts.get("slide_id")
+        if slide_id:
+            slides = slides_for_render(slides, slide_id)
+            if not slides:
+                raise NonRetryableTaskError("NOT_FOUND", "Slide not found")
+        elif not slides:
             raise NonRetryableTaskError("VALIDATION", "No slides")
 
         media: list[SlideMedia] = []
@@ -210,24 +220,34 @@ def render_video(self, job_id: str) -> dict:
             n = s.narration
             if not n or n.tts_status != "ready" or not n.audio_key:
                 raise NonRetryableTaskError("VALIDATION", f"Slide {s.id} missing ready TTS audio")
+            audio_path = storage.absolute_path(n.audio_key)
+            anim = s.animation or "none"
+            if anim == "wan_i2v" and not settings.wan_i2v_enabled:
+                # Fall back so export still works when feature is disabled
+                anim = "ken_burns"
+            if anim == "wan_t2v" and not settings.wan_t2v_enabled:
+                anim = "ken_burns"
             entries = s.all_image_entries()
-            if not entries:
+            if anim == "wan_t2v":
+                used_t2v = True
+            elif not entries:
                 raise NonRetryableTaskError("VALIDATION", f"Slide {s.id} has no images")
             image_paths = [storage.absolute_path(e["key"]) for e in entries]
             image_durs = [e.get("duration_ms") for e in entries]
             for p in image_paths:
                 if not p.is_file():
                     raise NonRetryableTaskError("VALIDATION", f"Slide {s.id} image missing: {p.name}")
-            audio_path = storage.absolute_path(n.audio_key)
-            anim = s.animation or "none"
-            if anim == "wan_i2v" and not settings.wan_i2v_enabled:
-                # Fall back so export still works when feature is disabled
-                anim = "ken_burns"
-            i2v_cache = storage.absolute_path(f"uploads/{job.project_id}/i2v_cache")
+            if anim == "wan_t2v":
+                cache_dir = storage.absolute_path(f"uploads/{job.project_id}/t2v_cache")
+            elif anim == "wan_i2v":
+                cache_dir = storage.absolute_path(f"uploads/{job.project_id}/i2v_cache")
+            else:
+                cache_dir = None
+            cover = image_paths[0] if image_paths else Path("wan-t2v")
             media.append(
                 SlideMedia(
                     slide_id=str(s.id),
-                    image_path=image_paths[0],
+                    image_path=cover,
                     image_paths=image_paths,
                     image_durations_ms=image_durs,
                     audio_path=audio_path,
@@ -236,7 +256,7 @@ def render_video(self, job_id: str) -> dict:
                     transition=s.transition or "fade",
                     animation=anim,
                     motion_prompt=getattr(s, "motion_prompt", None) or "",
-                    i2v_cache_dir=i2v_cache if anim == "wan_i2v" else None,
+                    i2v_cache_dir=cache_dir,
                     subtitle_cues=load_cues(audio_path),
                 )
             )
@@ -368,6 +388,13 @@ def render_video(self, job_id: str) -> dict:
             raise self.retry(exc=e, countdown=10)
         return {"status": "failed", "error": str(e)}
     finally:
+        if used_t2v:
+            try:
+                from app.services.wan_t2v import unload_t2v
+
+                unload_t2v()
+            except Exception:
+                pass
         if work_dir.exists():
             shutil.rmtree(work_dir, ignore_errors=True)
         db.close()

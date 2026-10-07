@@ -82,7 +82,7 @@ class Slide(Base):
     duration_ms: Mapped[int] = mapped_column(Integer, default=5000)
     transition: Mapped[str] = mapped_column(String(32), default="fade")
     animation: Mapped[str] = mapped_column(String(32), default="none")
-    # Optional motion description for Wan2.1 I2V (animation=wan_i2v)
+    # Optional prompt for Wan2.1 I2V or T2V 1.3B (animation=wan_i2v or wan_t2v)
     motion_prompt: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)

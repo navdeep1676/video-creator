@@ -24,7 +24,7 @@ class SlideMedia:
     text: str
     duration_ms: int
     transition: str  # none | fade
-    animation: str  # none | ken_burns | wan_i2v
+    animation: str  # none | ken_burns | wan_i2v | wan_t2v
     # Optional precomputed speech-synced cues (relative to slide start)
     subtitle_cues: list[dict[str, Any]] = field(default_factory=list)
     # Multiple images on one slide → slideshow within the slide duration
@@ -32,9 +32,9 @@ class SlideMedia:
     # Per-image hold times (ms). If empty/None weights → equal split.
     # Scaled so they sum to the slide duration (narration length).
     image_durations_ms: list[int | None] = field(default_factory=list)
-    # Wan2.1 I2V motion prompt (used when animation=wan_i2v)
+    # Wan2.1 motion or text prompt (wan_i2v uses the still; wan_t2v ignores the still)
     motion_prompt: str = ""
-    # Project-level cache dir for generated I2V clips
+    # Project-level cache dir for generated Wan clips
     i2v_cache_dir: Path | None = None
 
     def resolved_image_paths(self) -> list[Path]:
@@ -103,6 +103,72 @@ class RenderResult:
 
 
 ProgressCb = Callable[[int, str], None]
+
+
+def _render_wan_t2v_segment(
+    slide: SlideMedia,
+    seg: Path,
+    duration_s: float,
+    index: int,
+    n_slides: int,
+    options: RenderOptions,
+    progress: ProgressCb,
+) -> None:
+    """Text-to-video 1.3B clip, then scale it onto the delivery frame."""
+    from app.services.wan_t2v import generate_t2v
+
+    progress(10 + int(30 * index / max(n_slides, 1)), "wan_t2v")
+    raw = seg.with_name(f"{seg.stem}_wan_t2v.mp4")
+    prompt = (slide.motion_prompt or "").strip() or (slide.text or "").strip()
+    generate_t2v(
+        raw,
+        prompt=prompt,
+        target_duration_s=duration_s,
+        cache_dir=slide.i2v_cache_dir,
+        frame_width=options.width,
+        frame_height=options.height,
+        progress_cb=lambda message: progress(
+            10 + int(30 * (index + 1) / max(n_slides, 1)),
+            f"wan_t2v:{message[:40]}",
+        ),
+    )
+    fi, fo = 0.0, 0.0
+    if slide.transition == "fade":
+        fi = 0.0 if index == 0 else options.fade_s
+        fo = 0.0 if index == n_slides - 1 else options.fade_s
+        if duration_s < 2 * options.fade_s:
+            if index != 0:
+                fi = duration_s / 4
+            if index != n_slides - 1:
+                fo = duration_s / 4
+    vf_parts = [
+        f"scale={options.width}:{options.height}:force_original_aspect_ratio=decrease",
+        f"pad={options.width}:{options.height}:(ow-iw)/2:(oh-ih)/2",
+        f"fps={options.fps}",
+    ]
+    if fi > 0:
+        vf_parts.append(f"fade=t=in:st=0:d={fi:.3f}")
+    if fo > 0:
+        vf_parts.append(f"fade=t=out:st={max(0.0, duration_s - fo):.3f}:d={fo:.3f}")
+    vf_parts.append("format=yuv420p")
+    run_ffmpeg(
+        [
+            "-i",
+            str(raw.resolve()),
+            "-vf",
+            ",".join(vf_parts),
+            "-t",
+            f"{duration_s:.3f}",
+            "-an",
+            "-c:v",
+            "libx264",
+            "-preset",
+            options.x264_preset,
+            "-crf",
+            str(options.crf),
+            str(seg),
+        ]
+    )
 
 
 def _fade_durations(d: float, fade_s: float, is_first: bool, is_last: bool, transition: str) -> tuple[float, float]:
@@ -174,6 +240,19 @@ def render_project_video(
         slide: SlideMedia = entry["slide"]
         d = entry["duration_s"]
         seg = work_dir / f"segment_{i:04d}.mp4"
+        if slide.animation == "wan_t2v":
+            _render_wan_t2v_segment(
+                slide,
+                seg,
+                d,
+                i,
+                n_slides,
+                options,
+                lambda p, stage: progress(p, stage),
+            )
+            segment_paths.append(seg)
+            progress(10 + int(30 * (i + 1) / n_slides), "segments")
+            continue
         image_paths = slide.resolved_image_paths()
         if not image_paths:
             raise ValueError(f"Slide {slide.slide_id} has no images")

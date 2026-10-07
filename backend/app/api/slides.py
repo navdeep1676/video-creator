@@ -86,7 +86,8 @@ def _slide_out(slide: Slide, user_id: UUID) -> SlideOut:
     )
 
 
-VALID_ANIMATIONS = frozenset({"none", "ken_burns", "wan_i2v"})
+VALID_ANIMATIONS = frozenset({"none", "ken_burns", "wan_i2v", "wan_t2v"})
+_ANIMATION_ERROR = "animation must be none, ken_burns, wan_i2v, or wan_t2v"
 
 
 def _default_voice(project: Project) -> str:
@@ -162,7 +163,7 @@ def create_empty_slide(
     if body.animation not in VALID_ANIMATIONS:
         raise AppError(
             "VALIDATION",
-            "animation must be none, ken_burns, or wan_i2v",
+            _ANIMATION_ERROR,
             400,
         )
 
@@ -513,7 +514,7 @@ def update_slide(
         if body.animation not in VALID_ANIMATIONS:
             raise AppError(
                 "VALIDATION",
-                "animation must be none, ken_burns, or wan_i2v",
+                _ANIMATION_ERROR,
                 400,
             )
         slide.animation = body.animation

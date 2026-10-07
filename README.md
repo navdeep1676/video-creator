@@ -13,7 +13,7 @@
 - Async Deepgram TTS (mock mode without API key)
 - Background FFmpeg render (fade + concat timeline, subtitles, optional BGM)
 - Download MP4 + signed media URLs for preview
-- Original horror and kids stories from OpenRouter, Gemini, or OpenAI (`POST /api/v1/projects/{id}/story`). Set `OPENROUTER_API_KEY`, `GEMINI_API_KEY`, or `OPENAI_API_KEY` in `.env`. Models are listed at `/api/v1/models`.
+- Original horror and kids stories from a local OpenAI-compatible model, OpenRouter, Gemini, or OpenAI (`POST /api/v1/projects/{id}/story`). Local models use `LOCAL_LLM_BASE_URL` (Ollama on port 11434, or LM Studio). Cloud models need `OPENROUTER_API_KEY`, `GEMINI_API_KEY`, or `OPENAI_API_KEY`. Models are listed at `/api/v1/models`.
 - Local ACE-Step 1.5 music (`POST /api/v1/projects/{id}/music/generate`) once a story exists. The ACE-Step server stays on port 8001. `music_mode=none` skips it.
 - Local Qwen-Image-2.1 scene stills through ComfyUI (`POST /api/v1/projects/{id}/images/generate`). ComfyUI stays on port 8188.
 
@@ -145,6 +145,31 @@ Real generation takes **1–4+ minutes per image**. Clips are cached under `uplo
 
 Status: `GET /health` → `wan_i2v`, or `GET /api/v1/video/wan-i2v/status`.
 
+### Wan2.1 Text-to-Video 1.3B
+
+[Wan2.1-T2V-1.3B](https://huggingface.co/Wan-AI/Wan2.1-T2V-1.3B-Diffusers) writes a short clip from a text prompt. It does not go through ComfyUI. On a slide, set **Animation** to **Text to video (Wan2.1 T2V 1.3B)**. A still image is optional. The prompt is the video prompt, or the narration when that box is empty.
+
+The 1.3B model is the 480p checkpoint (832×480, or 480×832 for a portrait frame). It fits a 16 GB GPU when offload is on. Do not run it while ComfyUI or ACE-Step is using the GPU.
+
+| Mode | When | Requirements |
+|------|------|----------------|
+| **Diffusers** | GPU PyTorch installed, `WAN_T2V_BACKEND=auto` | `pip install -r backend/requirements-wan.txt`. First run downloads `Wan-AI/Wan2.1-T2V-1.3B-Diffusers`. |
+| **Official CLI** | `WAN_T2V_BACKEND=cli` | `generate.py --task t2v-1.3B` and the `Wan2.1-T2V-1.3B` checkpoint directory |
+| **Mock** | `WAN_T2V_MOCK=true` | Solid-color stand-in, not real video |
+
+On the RX 9060 XT, install the ROCm build of PyTorch. That build exposes the GPU as `torch.cuda`. The app does not call `nvidia-smi`.
+
+```bash
+# Repo-root .env
+WAN_T2V_MOCK=false
+WAN_T2V_BACKEND=auto
+WAN_T2V_OFFLOAD=true
+WAN_T2V_GUIDANCE_SCALE=6
+WAN_T2V_FLOW_SHIFT=8
+```
+
+Clips are cached under `uploads/{project_id}/t2v_cache/`. Status: `GET /health` → `wan_t2v`, or `GET /api/v1/video/wan-t2v/status`.
+
 ## Local development (without full compose)
 
 ### Prerequisites
@@ -216,6 +241,9 @@ React → FastAPI → PostgreSQL
 | `WAN_I2V_MOCK` | `true` | FFmpeg stand-in instead of real Wan2.1 |
 | `WAN_I2V_BACKEND` | `mock` | `mock` \| `diffusers` \| `cli` |
 | `WAN_I2V_MODEL_ID` | I2V-14B-480P Diffusers | Hugging Face model id |
+| `WAN_T2V_MODEL_ID` | `Wan-AI/Wan2.1-T2V-1.3B-Diffusers` | Local text-to-video, no ComfyUI |
+| `WAN_T2V_BACKEND` | `auto` | `auto` \| `diffusers` \| `cli` \| `mock` |
+| `WAN_T2V_MOCK` | `false` | FFmpeg stand-in instead of real T2V |
 | `SECRET_KEY` | dev string | JWT + media HMAC |
 | `CORS_ORIGINS` | localhost Vite | Comma-separated |
 

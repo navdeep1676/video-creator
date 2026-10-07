@@ -34,7 +34,7 @@ from app.services.caption_styles import (
     resolve_caption_style,
 )
 from app.services.duration import effective_duration_ms
-from app.services.export_readiness import build_export_readiness
+from app.services.export_readiness import build_export_readiness, slides_for_render
 from app.services.media_tokens import signed_url_path
 from app.services.storage import LocalStorage
 from app.services.job_control import cancel_project_jobs, cancel_video_job
@@ -51,6 +51,15 @@ def _job_out(job: VideoJob, user_id: UUID) -> VideoJobOut:
     height = opts.get("height")
     quality = opts.get("quality") or "full"
     caption_style = opts.get("caption_style")
+    raw_slide = opts.get("slide_id")
+    slide_id = None
+    if raw_slide:
+        try:
+            slide_id = UUID(str(raw_slide))
+        except ValueError:
+            slide_id = None
+    raw_order = opts.get("slide_order")
+    slide_order = int(raw_order) if raw_order else None
     if ar and (not width or not height):
         try:
             preset = resolve_aspect_ratio(str(ar))
@@ -73,6 +82,8 @@ def _job_out(job: VideoJob, user_id: UUID) -> VideoJobOut:
         height=int(height) if height else None,
         quality=str(quality) if quality else None,
         caption_style=str(caption_style) if caption_style else None,
+        slide_id=slide_id,
+        slide_order=slide_order,
         error_code=job.error_code,
         error_message=job.error_message,
         created_at=job.created_at,
@@ -110,6 +121,16 @@ def wan_i2v_capability(
     return wan_i2v_status()
 
 
+@router.get("/wan-t2v/status")
+def wan_t2v_capability(
+    user: User = Depends(get_current_user),
+) -> dict:
+    """Wan2.1 T2V-1.3B status. Local Diffusers or official CLI, not ComfyUI."""
+    from app.services.wan_t2v import wan_t2v_status
+
+    return wan_t2v_status()
+
+
 @router.get("/caption-styles", response_model=ListResponse)
 def list_caption_styles(
     user: User = Depends(get_current_user),
@@ -125,18 +146,29 @@ def list_caption_styles(
 @router.get("/projects/{project_id}/export-readiness", response_model=ExportReadinessOut)
 def export_readiness(
     project_id: UUID,
+    slide_id: UUID | None = Query(default=None),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> ExportReadinessOut:
-    """Pre-render checklist: missing images, empty narration, missing/in-progress TTS."""
+    """Pre-render checklist: missing images, empty narration, missing/in-progress TTS.
+
+    Pass slide_id to check only that slide before a single-slide video.
+    """
     project = get_owned_project(db, project_id, user)
-    slides = db.scalars(
-        select(Slide)
-        .options(selectinload(Slide.narration))
-        .where(Slide.project_id == project.id)
-        .order_by(Slide.order_index)
-    ).all()
-    return build_export_readiness(project, list(slides))
+    slides = list(
+        db.scalars(
+            select(Slide)
+            .options(selectinload(Slide.narration))
+            .where(Slide.project_id == project.id)
+            .order_by(Slide.order_index)
+        ).all()
+    )
+    single = slide_id is not None
+    if single:
+        slides = slides_for_render(slides, slide_id)
+        if not slides:
+            raise AppError("NOT_FOUND", "Slide not found", 404)
+    return build_export_readiness(project, slides, single_slide=single)
 
 
 @router.post("/render", response_model=VideoJobOut)
@@ -160,13 +192,23 @@ def start_render(
     if active:
         raise AppError("RENDER_IN_PROGRESS", "A render job is already active for this project", 409)
 
-    slides = db.scalars(
-        select(Slide).options(selectinload(Slide.narration)).where(Slide.project_id == project.id).order_by(Slide.order_index)
-    ).all()
-    if not slides:
+    slides = list(
+        db.scalars(
+            select(Slide)
+            .options(selectinload(Slide.narration))
+            .where(Slide.project_id == project.id)
+            .order_by(Slide.order_index)
+        ).all()
+    )
+    single = body.slide_id is not None
+    if single:
+        slides = slides_for_render(slides, body.slide_id)
+        if not slides:
+            raise AppError("NOT_FOUND", "Slide not found", 404)
+    elif not slides:
         raise AppError("VALIDATION", "Project has no slides", 400)
 
-    readiness = build_export_readiness(project, list(slides))
+    readiness = build_export_readiness(project, slides, single_slide=single)
     if not readiness.ready:
         details = {
             "summary": readiness.summary,
@@ -235,6 +277,8 @@ def start_render(
             if body.background_music_asset_id
             else None,
             "background_music_volume": body.background_music_volume,
+            "slide_id": str(body.slide_id) if body.slide_id else None,
+            "slide_order": slides[0].order_index + 1 if single else None,
         },
     )
     db.add(job)

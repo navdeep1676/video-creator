@@ -32,6 +32,12 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     openai_base_url: str = "https://api.openai.com/v1"
     openai_model: str = "gpt-5.4-mini"
+    # OpenAI-compatible local server. Ollama uses http://127.0.0.1:11434/v1.
+    local_llm_base_url: str = "http://127.0.0.1:11434/v1"
+    local_llm_model: str = ""
+    local_llm_api_key: str = ""
+    ffmpeg_path: str = ""
+    ffprobe_path: str = ""
     comfyui_base_url: str = "http://127.0.0.1:8188"
     comfyui_timeout_s: float = 900
     comfyui_poll_s: float = 2
@@ -112,6 +118,38 @@ class Settings(BaseSettings):
     wan_i2v_cli_script: str = ""
     wan_i2v_ckpt_dir: str = ""
     wan_i2v_python: str = "python"
+
+    # Wan2.1 Text-to-Video 1.3B. Local Diffusers or official generate.py. No ComfyUI.
+    # https://huggingface.co/Wan-AI/Wan2.1-T2V-1.3B-Diffusers
+    wan_t2v_enabled: bool = True
+    # auto | diffusers | cli | mock
+    wan_t2v_backend: str = "auto"
+    wan_t2v_mock: bool = False
+    wan_t2v_model_id: str = "Wan-AI/Wan2.1-T2V-1.3B-Diffusers"
+    wan_t2v_width: int = 832
+    wan_t2v_height: int = 480
+    wan_t2v_num_frames: int = 81  # 4n+1, ~5s at 16 fps
+    wan_t2v_guidance_scale: float = 6.0  # official 1.3B recommendation
+    wan_t2v_flow_shift: float = 8.0
+    wan_t2v_num_inference_steps: int = 50
+    wan_t2v_seed: int = 42
+    wan_t2v_device: str = "auto"  # auto | cuda | cpu (ROCm PyTorch uses cuda)
+    wan_t2v_offload: bool = True
+    wan_t2v_timeout_s: int = 3600
+    wan_t2v_default_prompt: str = (
+        "Cinematic motion, natural movement, detailed scene, smooth animation"
+    )
+    wan_t2v_negative_prompt: str = (
+        "Bright tones, overexposed, static, blurred details, subtitles, style, works, paintings, "
+        "images, static, overall gray, worst quality, low quality, JPEG compression residue, ugly, "
+        "incomplete, extra fingers, poorly drawn hands, poorly drawn faces, deformed, disfigured, "
+        "misshapen limbs, fused fingers, still picture, messy background, three legs, many people "
+        "in the background, walking backwards"
+    )
+    # Official repo weights (not the Diffusers folder) and generate.py. Empty script falls back to WAN_I2V_CLI_SCRIPT.
+    wan_t2v_ckpt_dir: str = ""
+    wan_t2v_cli_script: str = ""
+    wan_t2v_python: str = ""
 
     celery_task_always_eager: bool = False
     render_hard_limit_s: int = 1800

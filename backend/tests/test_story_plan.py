@@ -6,7 +6,7 @@ import pytest
 
 from app.config import Settings
 from app.services.openrouter_llm import OpenRouterLLMProvider, ProviderUnavailable
-from app.services.story_planner import HORROR_BEATS, auto_scene_count, plan_story, video_seconds
+from app.services.story_planner import HORROR_BEATS, PlanError, auto_scene_count, import_plan, plan_story, video_seconds
 
 NARRATION = "lantern flickers beside the gate"
 MOTION = "the child walks to the door"
@@ -120,6 +120,33 @@ def kids_payload(count=4, lyrics="Verse:\nPaper boats sail on Tuesday puddles\nC
 
 def _settings():
     return Settings(wan_budget_ratio=0.25, wan_clip_min_seconds=5, wan_clip_max_seconds=10)
+
+
+def test_import_plan_keeps_pasted_scenes_and_fits_the_runtime():
+    raw = horror_payload(count=7)
+    raw["scenes"][3]["continues_from_index"] = 99
+    plan = import_plan(raw, content_type="horror", duration_seconds=140, settings=_settings())
+    assert len(plan.scenes) == 7
+    assert [scene.beat for scene in plan.scenes] == list(HORROR_BEATS)
+    assert plan.scenes[0].continues_from_index is None
+    assert plan.scenes[3].continues_from_index == 2
+    assert plan.scenes[-1].end_time == 140
+    assert plan.scenes[0].music_prompt
+
+
+def test_import_plan_rejects_a_schema_document():
+    with pytest.raises(PlanError, match="not the JSON schema"):
+        import_plan(
+            {"type": "object", "properties": {"title": {"type": "string"}}},
+            content_type="horror",
+            duration_seconds=30,
+            settings=_settings(),
+        )
+
+
+def test_import_plan_reports_missing_fields():
+    with pytest.raises(PlanError, match="title"):
+        import_plan({"hook": "only a hook"}, content_type="horror", duration_seconds=30, settings=_settings())
 
 
 def test_each_scene_gets_its_own_music_prompt():

@@ -14,6 +14,7 @@ from app.config import Settings, get_settings
 from app.db.models import Project, Story, StoryCharacter, StoryJob, StoryLocation, StoryScene
 from app.db.session import SessionLocal
 from app.services.gemini_llm import GeminiLLMProvider, is_gemini_model
+from app.services.local_llm import LocalLLMProvider, is_local_model
 from app.services.openai_llm import OpenAILLMProvider, is_openai_model
 from app.services.openrouter_llm import LLMProvider, OpenRouterLLMProvider
 from app.services.story_planner import StoryPlan, plan_story, plan_to_json
@@ -26,6 +27,9 @@ logger = logging.getLogger(__name__)
 def build_llm_provider(settings: Settings, model: str, override: LLMProvider | None = None) -> LLMProvider:
     if override is not None:
         return override
+    if is_local_model(model):
+        tuned = settings.model_copy(update={"local_llm_model": model})
+        return LocalLLMProvider(tuned)
     if is_gemini_model(model):
         tuned = settings.model_copy(update={"gemini_model": model})
         return GeminiLLMProvider(tuned)

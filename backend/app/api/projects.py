@@ -28,9 +28,11 @@ from app.dependencies import get_current_user
 from app.services.media_tokens import signed_url_path
 from app.services.music_job import latest_job, music_storage_key
 from app.services.gemini_llm import gemini_catalog_rows
+from app.services.local_llm import local_catalog_rows
 from app.services.openai_llm import openai_catalog_rows
 from app.services.openrouter_catalog import load_catalog
-from app.services.story_job import build_llm_provider, execute_story_job, latest_story_job
+from app.services.story_job import build_llm_provider, execute_story_job, latest_story_job, save_story
+from app.services.story_planner import PlanError, StoryPlan, import_plan
 from app.services.story_slides import replace_project_slides
 from app.schemas.common import ListResponse, ProjectCreate, ProjectOut, ProjectUpdate
 from app.services.aspect_ratios import project_aspect_ratio, resolve_aspect_ratio
@@ -209,6 +211,12 @@ def projects_summary(
     }
 
 
+@router.get("/story-schema")
+def story_schema(_user: User = Depends(get_current_user)) -> dict:
+    """The JSON object a direct story paste must match."""
+    return {"name": "story_plan", "schema": StoryPlan.model_json_schema()}
+
+
 @router.get("/{project_id}", response_model=ProjectOut)
 def get_project(
     project_id: UUID,
@@ -279,7 +287,7 @@ def delete_project(
 
 class StoryRequest(BaseModel):
     content_type: Literal["horror", "kids"] = "horror"
-    topic: str = Field(min_length=1, max_length=4000)
+    topic: str = Field(default="", max_length=4000)
     duration_seconds: int = Field(ge=5, le=7200)
     language: Literal["en", "hi", "hinglish"] = "en"
     visual_style: str = Field(default="Dark Horror", max_length=80)
@@ -287,6 +295,7 @@ class StoryRequest(BaseModel):
     music_mode: Literal["none", "background", "full_song"] = "background"
     scene_count: str = "auto"
     llm_model: str | None = None
+    plan: dict | None = None
 
 
 def _check_scene_count(value: str) -> str:
@@ -475,6 +484,42 @@ def build_story_slides(
     return {"slides": count}
 
 
+def _save_direct_story(db: Session, project: Project, body: StoryRequest) -> dict:
+    active = db.scalar(
+        select(StoryJob).where(
+            StoryJob.project_id == project.id,
+            StoryJob.stage == "story",
+            StoryJob.status.in_(("queued", "running")),
+        )
+    )
+    if active is not None:
+        return _job_out(active)
+    settings = get_settings()
+    try:
+        plan = import_plan(
+            body.plan or {},
+            content_type=body.content_type,
+            duration_seconds=body.duration_seconds,
+            settings=settings,
+        )
+    except PlanError as exc:
+        raise AppError("VALIDATION", str(exc), 400) from exc
+    topic = body.topic.strip() or plan.title
+    payload = body.model_dump(exclude={"plan"})
+    payload["topic"] = topic[:4000]
+    payload["scene_count"] = str(len(plan.scenes))
+    payload["source"] = "json"
+    job = StoryJob(project_id=project.id, stage="story", status="succeeded", attempts=1, payload=payload)
+    stored = dict(project.settings or {})
+    stored["story"] = payload
+    project.settings = stored
+    save_story(db, project, plan)
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    return _job_out(job)
+
+
 @router.post("/{project_id}/story", status_code=202)
 def enqueue_story(
     project_id: UUID,
@@ -485,13 +530,18 @@ def enqueue_story(
     db: Session = Depends(get_db),
 ) -> dict:
     project = get_owned_project(db, project_id, user)
+    if body.plan is not None:
+        return _save_direct_story(db, project, body)
+    if not body.topic.strip():
+        raise AppError("VALIDATION", "Add a topic or paste story JSON", 400)
     scene_count = _check_scene_count(body.scene_count.strip())
     settings = get_settings()
     catalog = load_catalog(settings)
     model = body.llm_model or settings.openrouter_model
+    local_rows, _local_up = local_catalog_rows(settings)
     allowed = catalog.ids() | {row["id"] for row in gemini_catalog_rows(settings)} | {
         row["id"] for row in openai_catalog_rows(settings)
-    }
+    } | {row["id"] for row in local_rows}
     if model not in allowed:
         raise AppError("VALIDATION", "Choose a text model from the catalog", 400)
     active = db.scalar(

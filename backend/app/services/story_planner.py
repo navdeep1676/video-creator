@@ -120,6 +120,41 @@ def target_scene_count(duration_seconds: int, scene_count: str) -> int:
     return int(scene_count)
 
 
+def import_plan(raw: dict, *, content_type: str, duration_seconds: int, settings: Settings) -> StoryPlan:
+    """Validate a pasted story object and fit it to the project length.
+
+    Scene count stays as pasted. Timing and video budget still follow the project.
+    """
+    if not isinstance(raw, dict):
+        raise PlanError("Story JSON must be an object")
+    if "properties" in raw and "scenes" not in raw:
+        raise PlanError("Paste a story object with scenes, not the JSON schema")
+    try:
+        plan = StoryPlan.model_validate(raw)
+    except ValidationError as exc:
+        raise PlanError(_validation_message(exc)) from exc
+    for index, scene in enumerate(plan.scenes):
+        scene.continues_from_index = None if index == 0 else index - 1
+    _reject_bad_plan(plan, content_type)
+    plan.scenes = prepare_scenes(
+        plan.scenes,
+        duration=duration_seconds,
+        target=len(plan.scenes),
+        content_type=content_type,
+        settings=settings,
+    )
+    ensure_scene_music(plan.scenes, plan.music_prompt, content_type)
+    return plan
+
+
+def _validation_message(exc: ValidationError) -> str:
+    parts: list[str] = []
+    for err in exc.errors()[:5]:
+        loc = ".".join(str(item) for item in err.get("loc", ()))
+        parts.append(f"{loc}: {err.get('msg')}" if loc else str(err.get("msg")))
+    return "; ".join(parts) or "Story JSON does not match the schema"
+
+
 def plan_story(project: Any, provider: LLMProvider, settings: Settings) -> StoryPlan:
     schema = StoryPlan.model_json_schema()
     user = _user_prompt(project)

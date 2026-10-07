@@ -33,6 +33,13 @@ REQUIRED_NODES = (
     "SaveImage",
 )
 
+# (object_info node, input name, Settings attribute, ComfyUI folder)
+WEIGHT_INPUTS = (
+    ("UNETLoader", "unet_name", "image_model", "models/diffusion_models"),
+    ("CLIPLoader", "clip_name", "image_clip", "models/text_encoders"),
+    ("VAELoader", "vae_name", "image_vae", "models/vae"),
+)
+
 
 class ImageGenerationError(RuntimeError):
     """ComfyUI accepted the call and then failed the prompt."""
@@ -72,6 +79,56 @@ def set_mapped_value(graph: dict, path: str, value: Any) -> None:
         cursor = cursor[part]
     if isinstance(cursor, dict):
         cursor[parts[-1]] = value
+
+
+def combo_choices(info: dict, node: str, field: str) -> list[str] | None:
+    """Return a loader's filename list, or None when this ComfyUI did not publish one."""
+    spec = (((info.get(node) or {}).get("input") or {}).get("required") or {}).get(field)
+    if isinstance(spec, list) and spec and isinstance(spec[0], list):
+        return [str(item) for item in spec[0]]
+    return None
+
+
+def missing_weight_files(info: dict, settings: Settings) -> list[str]:
+    """Filenames the running ComfyUI cannot see. An absent combo list is not a miss."""
+    missing: list[str] = []
+    for node, field, attr, folder in WEIGHT_INPUTS:
+        choices = combo_choices(info, node, field)
+        if choices is None:
+            continue
+        filename = str(getattr(settings, attr, "") or "").strip()
+        if filename and filename not in choices:
+            missing.append(f"{folder}/{filename}")
+    return missing
+
+
+def format_comfy_error(path: str, status_code: int, payload: Any) -> str:
+    """Turn a ComfyUI error body into one line. A bare status is the fallback."""
+    details: list[str] = []
+    if isinstance(payload, dict):
+        node_errors = payload.get("node_errors") or {}
+        if isinstance(node_errors, dict):
+            for node in node_errors.values():
+                errors = node.get("errors") if isinstance(node, dict) else None
+                if not isinstance(errors, list):
+                    continue
+                for err in errors:
+                    if not isinstance(err, dict):
+                        continue
+                    text = str(err.get("details") or err.get("message") or "").strip()
+                    if text and text not in details:
+                        details.append(text)
+        error = payload.get("error")
+        if not details and isinstance(error, dict):
+            text = str(error.get("message") or "").strip()
+            if text:
+                details.append(text)
+    suffix = "; ".join(details)
+    if len(suffix) > 700:
+        suffix = suffix[:700].rstrip() + "…"
+    if suffix:
+        return f"ComfyUI {path} failed ({status_code}): {suffix}"
+    return f"ComfyUI {path} failed ({status_code})"
 
 
 def qwen_canvas(width: int, height: int, max_side: int) -> tuple[int, int]:
@@ -145,6 +202,14 @@ class ComfyUIImageProvider:
                 "ComfyUI is missing Qwen-Image-2.1 nodes: "
                 + ", ".join(missing)
                 + ". Update ComfyUI to 0.37 or newer and restart it."
+            )
+        weights = missing_weight_files(info, self.settings)
+        if weights:
+            raise ImageGenerationError(
+                "ComfyUI is missing Qwen-Image-2.1 weights: "
+                + ", ".join(weights)
+                + ". Download them from https://huggingface.co/Comfy-Org/Qwen-Image-2.1 "
+                + "into those folders under the ComfyUI models directory."
             )
         self._nodes_checked = True
 
@@ -228,7 +293,12 @@ class ComfyUIImageProvider:
                 f"ComfyUI is not reachable at {self.settings.comfyui_base_url}. Start it on port 8188."
             ) from exc
         if response.status_code >= 400:
-            raise ImageGenerationError(f"ComfyUI {path} failed ({response.status_code})")
+            payload: Any = None
+            try:
+                payload = response.json()
+            except Exception:
+                payload = None
+            raise ImageGenerationError(format_comfy_error(path, response.status_code, payload))
         try:
             return response.json()
         except Exception as exc:

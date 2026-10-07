@@ -1,17 +1,20 @@
-# Optional deps for real Wan2.1 Image-to-Video (GPU worker).
-# Core app (requirements.txt) stays lean; install this only on GPU hosts:
+# Optional deps for real Wan2.1 video (GPU worker).
+# Core app (requirements.txt) stays lean; install this only on GPU hosts.
 #
-#   pip install -r requirements.txt -r requirements-wan.txt
+# Do not pip-install torch from PyPI on the RX 9070 XT. That wheel is not ROCm.
+# Install the gfx1201 wheel first, then this file. Pip must not replace that torch.
+#
+#   python -m pip install --index-url https://stable.repo.amd.com/rocm/whl-next/ "torch[device-gfx1201]==2.14.0+rocm10.1.0" "torchvision[device-gfx1201]==0.29.0a0+rocm10.1.0"
+#   python -m pip install -r requirements-wan.txt
 #
 # Models (Diffusers):
-#   Wan-AI/Wan2.1-I2V-14B-480P-Diffusers  (default, ~lower VRAM)
+#   Wan-AI/Wan2.1-T2V-1.3B-Diffusers       (text-to-video, 480p, no ComfyUI)
+#   Wan-AI/Wan2.1-I2V-14B-480P-Diffusers  (image-to-video)
 #   Wan-AI/Wan2.1-I2V-14B-720P-Diffusers
 #
 # Official repo: https://github.com/Wan-Video/Wan2.1
 # Note: flash_attn is optional/hard to build; Diffusers path works without it.
 
-torch>=2.4.0
-torchvision>=0.19.0
 diffusers>=0.32.0
 transformers>=4.49.0
 accelerate>=1.1.1

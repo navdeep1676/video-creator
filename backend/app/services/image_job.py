@@ -15,6 +15,7 @@ from app.db.session import SessionLocal
 from app.services.aspect_ratios import project_aspect_ratio
 from app.services.comfyui import (
     ComfyUIImageProvider,
+    ImageGenerationError,
     build_prompt_graph,
     qwen_canvas,
 )
@@ -87,6 +88,14 @@ def _draw_project(
     }
     if not slides:
         return ["Create slides from the story before generating images"]
+    ensure = getattr(provider, "ensure_nodes", None)
+    if callable(ensure):
+        try:
+            ensure()
+        except ProviderUnavailable:
+            raise
+        except ImageGenerationError as exc:
+            return [str(exc)]
     preset = project_aspect_ratio(project.settings)
     width, height = qwen_canvas(preset.width, preset.height, settings.image_max_side)
     errors: list[str] = []

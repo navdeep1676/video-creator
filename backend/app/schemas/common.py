@@ -118,7 +118,7 @@ class SlideOut(ORMModel):
     effective_duration_ms: int
     transition: str
     animation: str
-    # Motion description for Wan2.1 I2V when animation=wan_i2v
+    # Prompt for Wan2.1 I2V or T2V 1.3B when animation is wan_i2v or wan_t2v
     motion_prompt: str | None = None
     narration: NarrationOut | None = None
 
@@ -221,6 +221,8 @@ class ApplyLanguageRequest(BaseModel):
 
 class VideoRenderRequest(BaseModel):
     project_id: UUID
+    # When set, render only this slide as its own video.
+    slide_id: UUID | None = None
     include_subtitles: bool = True
     # youtube | shorts | auto — platform-safe caption margins
     caption_style: str = Field(default="auto", pattern=r"^(auto|youtube|shorts)$")
@@ -291,6 +293,9 @@ class VideoJobOut(ORMModel):
     height: int | None = None
     quality: str | None = None
     caption_style: str | None = None
+    # Set when the job rendered one slide instead of the full project.
+    slide_id: UUID | None = None
+    slide_order: int | None = None
     error_code: str | None
     error_message: str | None
     created_at: Any

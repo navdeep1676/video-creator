@@ -14,6 +14,7 @@ import {
   Typography,
 } from "@mui/material";
 import AutoStoriesIcon from "@mui/icons-material/AutoStories";
+import CloudUploadIcon from "@mui/icons-material/CloudUpload";
 import { api, errMessage, mediaUrl } from "../api/client";
 import StoryReview, {
   type StoryCharacterView,
@@ -52,6 +53,28 @@ type StoryPayload = {
 
 const DURATIONS = [30, 60, 140, 180, 300];
 
+function readStoryFile(file: File): Promise<Record<string, unknown>> {
+  return file.text().then((text) => {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      throw new Error("That file is not valid JSON");
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("Story JSON must be an object");
+    }
+    const plan = parsed as Record<string, unknown>;
+    if ("properties" in plan && !("scenes" in plan)) {
+      throw new Error("Choose a story file, not the JSON schema");
+    }
+    if (!Array.isArray(plan.scenes)) {
+      throw new Error("Story JSON needs a scenes list");
+    }
+    return plan;
+  });
+}
+
 export default function StoryPanel({ projectId, defaultTopic }: { projectId: string; defaultTopic: string }) {
   const qc = useQueryClient();
   const [contentType, setContentType] = useState("horror");
@@ -62,6 +85,10 @@ export default function StoryPanel({ projectId, defaultTopic }: { projectId: str
   const [musicMode, setMusicMode] = useState("background");
   const [sceneCount, setSceneCount] = useState("auto");
   const [model, setModel] = useState("");
+  const [storyJson, setStoryJson] = useState("");
+  const [storyFileName, setStoryFileName] = useState("");
+  const [schemaText, setSchemaText] = useState("");
+  const [schemaOpen, setSchemaOpen] = useState(false);
   const [formError, setFormError] = useState("");
   const [reviewOpen, setReviewOpen] = useState(false);
 
@@ -73,6 +100,8 @@ export default function StoryPanel({ projectId, defaultTopic }: { projectId: str
         key_configured: boolean;
         gemini_key_configured?: boolean;
         openai_key_configured?: boolean;
+        local_available?: boolean;
+        local_base_url?: string;
         models: FreeModel[];
       },
     refetchOnMount: "always",
@@ -107,22 +136,72 @@ export default function StoryPanel({ projectId, defaultTopic }: { projectId: str
     if (!model && modelsQuery.data?.default_model) setModel(modelsQuery.data.default_model);
   }, [model, modelsQuery.data?.default_model]);
 
+  const showSchema = async () => {
+    if (schemaOpen) {
+      setSchemaOpen(false);
+      return;
+    }
+    if (!schemaText) {
+      const response = await api.get("/projects/story-schema");
+      setSchemaText(JSON.stringify(response.data.schema, null, 2));
+    }
+    setSchemaOpen(true);
+  };
+
+  const loadStoryFile = async (file: File) => {
+    const plan = await readStoryFile(file);
+    setStoryJson(JSON.stringify(plan, null, 2));
+    setStoryFileName(file.name);
+    setFormError("");
+    if (typeof plan.title === "string" && plan.title.trim()) setTopic(plan.title.trim());
+    const scenes = plan.scenes as Array<Record<string, unknown>>;
+    const end = Number(scenes[scenes.length - 1]?.end_time);
+    const match = DURATIONS.find((seconds) => Number.isFinite(end) && Math.abs(seconds - end) < 0.5);
+    if (match) setDuration(String(match));
+    const sample = `${plan.hook ?? ""} ${plan.story ?? ""}`;
+    if (/[\u0900-\u097F]/.test(sample)) setLanguage("hi");
+    if (typeof plan.kids_format === "string" && plan.kids_format.trim()) setContentType("kids");
+    else setContentType("horror");
+  };
+
+  const clearStoryFile = () => {
+    setStoryFileName("");
+    setStoryJson("");
+  };
+
   const generate = useMutation({
     mutationFn: async () => {
+      let plan: Record<string, unknown> | undefined;
+      if (storyJson.trim()) {
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(storyJson);
+        } catch {
+          throw new Error("Story JSON is not valid JSON");
+        }
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+          throw new Error("Story JSON must be an object");
+        }
+        plan = parsed as Record<string, unknown>;
+      }
       await api.post(`/projects/${projectId}/story`, {
         content_type: contentType,
-        topic: topic.trim(),
+        topic: topic.trim() || String(plan?.title || ""),
         duration_seconds: Number(duration),
         language,
         visual_style: visualStyle,
         music_mode: musicMode,
         scene_count: sceneCount,
         llm_model: model || undefined,
+        plan,
       });
     },
     onSuccess: async () => {
       setFormError("");
+      setStoryJson("");
+      setStoryFileName("");
       await qc.invalidateQueries({ queryKey: ["story", projectId] });
+      await qc.invalidateQueries({ queryKey: ["slides", projectId] });
     },
     onError: (error) => setFormError(errMessage(error)),
   });
@@ -182,14 +261,19 @@ export default function StoryPanel({ projectId, defaultTopic }: { projectId: str
   const models = modelsQuery.data?.models ?? [];
   const openaiModels = models.filter((item) => item.provider === "openai");
   const geminiModels = models.filter((item) => item.provider === "gemini");
-  const openRouterModels = models.filter((item) => item.provider !== "gemini" && item.provider !== "openai");
+  const localModels = models.filter((item) => item.provider === "local");
+  const openRouterModels = models.filter(
+    (item) => item.provider !== "gemini" && item.provider !== "openai" && item.provider !== "local"
+  );
   const selectedModel = models.find((item) => item.id === model);
   const missingGeminiKey = selectedModel?.provider === "gemini" && !modelsQuery.data?.gemini_key_configured;
   const missingOpenAIKey = selectedModel?.provider === "openai" && !modelsQuery.data?.openai_key_configured;
+  const missingLocal = selectedModel?.provider === "local" && modelsQuery.data && !modelsQuery.data.local_available;
   const missingOpenRouterKey =
     !!selectedModel &&
     selectedModel.provider !== "gemini" &&
     selectedModel.provider !== "openai" &&
+    selectedModel.provider !== "local" &&
     modelsQuery.data &&
     !modelsQuery.data.key_configured;
   const audioSrc = mediaUrl(storyQuery.data?.music?.audio_url);
@@ -230,15 +314,39 @@ export default function StoryPanel({ projectId, defaultTopic }: { projectId: str
       <Card>
         <CardContent>
           <Stack spacing={2}>
-            <Stack direction="row" spacing={1} alignItems="center">
-              <AutoStoriesIcon color="primary" />
-              <Typography variant="h6" fontWeight={800}>
-                AI story
-              </Typography>
+            <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between" flexWrap="wrap" useFlexGap>
+              <Stack direction="row" spacing={1} alignItems="center">
+                <AutoStoriesIcon color="primary" />
+                <Typography variant="h6" fontWeight={800}>
+                  AI story
+                </Typography>
+              </Stack>
+              <Button variant="contained" component="label" startIcon={<CloudUploadIcon />} disabled={planning}>
+                Add story JSON
+                <input
+                  hidden
+                  type="file"
+                  accept=".json,application/json"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    event.target.value = "";
+                    if (!file) return;
+                    void loadStoryFile(file).catch((error) => setFormError(errMessage(error)));
+                  }}
+                />
+              </Button>
             </Stack>
+            {storyFileName && (
+              <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
+                <Chip size="small" color="primary" label={storyFileName} onDelete={clearStoryFile} />
+                <Typography variant="caption" color="text.secondary">
+                  Loaded. Check type, length, and language, then press Use story JSON.
+                </Typography>
+              </Stack>
+            )}
             <Typography variant="body2" color="text.secondary">
-              OpenRouter, Gemini, or OpenAI writes an original horror story or kids song, then splits it into scenes. Wan
-              clips stay inside about a quarter of the runtime.
+              OpenRouter, Gemini, OpenAI, or a local model writes an original horror story or kids song, then splits it
+              into scenes. Wan clips stay inside about a quarter of the runtime.
             </Typography>
             {missingOpenRouterKey && (
               <Alert severity="warning">Add OPENROUTER_API_KEY to the environment before generating a story.</Alert>
@@ -248,6 +356,12 @@ export default function StoryPanel({ projectId, defaultTopic }: { projectId: str
             )}
             {missingOpenAIKey && (
               <Alert severity="warning">Add OPENAI_API_KEY to the environment before generating a story with OpenAI.</Alert>
+            )}
+            {missingLocal && (
+              <Alert severity="warning">
+                The local model server is not running at {modelsQuery.data?.local_base_url || "http://127.0.0.1:11434/v1"}.
+                Start Ollama or LM Studio, then generate the story again.
+              </Alert>
             )}
             {formError && (
               <Alert severity="error" onClose={() => setFormError("")}>
@@ -274,6 +388,37 @@ export default function StoryPanel({ projectId, defaultTopic }: { projectId: str
               </TextField>
             </Stack>
             <TextField label="Topic" value={topic} onChange={(e) => setTopic(e.target.value)} fullWidth multiline minRows={2} />
+            <Stack spacing={1}>
+              <Stack direction="row" spacing={1} alignItems="center">
+                <Button size="small" variant="text" onClick={() => void showSchema().catch((error) => setFormError(errMessage(error)))}>
+                  {schemaOpen ? "Hide JSON schema" : "JSON schema"}
+                </Button>
+                <Typography variant="caption" color="text.secondary">
+                  Or paste a story object below. Open the schema to see the fields.
+                </Typography>
+              </Stack>
+              {schemaOpen && (
+                <TextField
+                  label="JSON schema"
+                  value={schemaText}
+                  multiline
+                  minRows={8}
+                  fullWidth
+                  InputProps={{ readOnly: true, sx: { fontFamily: "monospace", fontSize: 12 } }}
+                />
+              )}
+              <TextField
+                label="Story JSON"
+                value={storyJson}
+                onChange={(e) => setStoryJson(e.target.value)}
+                fullWidth
+                multiline
+                minRows={4}
+                placeholder='{"title": "...", "hook": "...", "story": "...", "characters": [], "locations": [], "scenes": []}'
+                helperText="Optional. Choose Add story JSON, or paste a story object here. Type, length, and style above still apply."
+                InputProps={{ sx: { fontFamily: "monospace", fontSize: 13 } }}
+              />
+            </Stack>
             <Stack direction={{ xs: "column", md: "row" }} spacing={1.5}>
               <TextField
                 select
@@ -318,6 +463,12 @@ export default function StoryPanel({ projectId, defaultTopic }: { projectId: str
                     {item.name}
                   </MenuItem>
                 ))}
+                {localModels.length > 0 && <ListSubheader>Local</ListSubheader>}
+                {localModels.map((item) => (
+                  <MenuItem key={item.id} value={item.id}>
+                    {item.name}
+                  </MenuItem>
+                ))}
                 {openRouterModels.length > 0 && <ListSubheader>OpenRouter</ListSubheader>}
                 {openRouterModels.map((item) => (
                   <MenuItem key={item.id} value={item.id}>
@@ -326,13 +477,25 @@ export default function StoryPanel({ projectId, defaultTopic }: { projectId: str
                 ))}
               </TextField>
             </Stack>
+            {localModels.length === 0 && (
+              <Typography variant="caption" color="text.secondary">
+                Local models appear in the Model list when Ollama or LM Studio is running at{" "}
+                {modelsQuery.data?.local_base_url || "http://127.0.0.1:11434/v1"}.
+              </Typography>
+            )}
             <Button
               variant="contained"
-              disabled={planning || !topic.trim()}
+              disabled={planning || (!topic.trim() && !storyJson.trim())}
               onClick={() => generate.mutate()}
               sx={{ alignSelf: "flex-start" }}
             >
-              {planning ? "Writing the story…" : story ? "Regenerate story" : "Generate story"}
+              {planning
+                ? "Writing the story…"
+                : storyJson.trim()
+                  ? "Use story JSON"
+                  : story
+                    ? "Regenerate story"
+                    : "Generate story"}
             </Button>
             {story && musicMode !== "none" && (
               <Stack spacing={1} alignItems="flex-start">

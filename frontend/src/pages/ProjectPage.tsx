@@ -74,7 +74,7 @@ type Slide = {
   effective_duration_ms: number;
   transition: string;
   animation: string;
-  /** Motion description for Wan2.1 I2V when animation=wan_i2v */
+  /** Motion or text prompt for Wan2.1 I2V / T2V */
   motion_prompt?: string | null;
   narration: Narration | null;
 };
@@ -137,6 +137,37 @@ type WanI2vStatus = {
   error?: string | null;
   hint?: string | null;
 };
+
+function WanT2vBanner() {
+  const { data } = useQuery({
+    queryKey: ["wan-t2v-status"],
+    queryFn: async () => (await api.get("/video/wan-t2v/status")).data as WanI2vStatus,
+    staleTime: 30_000,
+  });
+  if (!data) return null;
+  if (data.real_ai) {
+    return (
+      <Alert severity="success" variant="outlined">
+        Wan2.1 T2V 1.3B runs locally via <strong>{data.backend}</strong>. ComfyUI is not used.
+        Export writes a 480p clip from the prompt. The first run downloads the weights.
+      </Alert>
+    );
+  }
+  if (data.mock) {
+    return (
+      <Alert severity="warning" variant="outlined">
+        <strong>Mock mode</strong> — this is a solid-color stand-in, not Wan2.1. Set{" "}
+        <code>WAN_T2V_MOCK=false</code> and install the local 1.3B weights.
+      </Alert>
+    );
+  }
+  return (
+    <Alert severity="error" variant="outlined">
+      Wan2.1 T2V 1.3B is not ready. {data.error || data.hint || "Install the local model."} This
+      path does not use ComfyUI.
+    </Alert>
+  );
+}
 
 function WanI2vBanner() {
   const { data } = useQuery({
@@ -1229,14 +1260,15 @@ export default function ProjectPage() {
                       <MenuItem value="none">None (static)</MenuItem>
                       <MenuItem value="ken_burns">Ken Burns (slow zoom)</MenuItem>
                       <MenuItem value="wan_i2v">AI Motion (Wan2.1 I2V)</MenuItem>
+                      <MenuItem value="wan_t2v">Text to video (Wan2.1 T2V 1.3B)</MenuItem>
                     </Select>
                   </FormControl>
                 </Stack>
-                {draft.animation === "wan_i2v" && (
+                {(draft.animation === "wan_i2v" || draft.animation === "wan_t2v") && (
                   <>
-                    <WanI2vBanner />
+                    {draft.animation === "wan_t2v" ? <WanT2vBanner /> : <WanI2vBanner />}
                     <TextField
-                      label="Motion prompt (Wan2.1)"
+                      label={draft.animation === "wan_t2v" ? "Video prompt (Wan2.1 T2V 1.3B)" : "Motion prompt (Wan2.1)"}
                       value={draft.motion_prompt}
                       onChange={(e) =>
                         setDraft((d) => (d ? { ...d, motion_prompt: e.target.value } : d))
@@ -1244,8 +1276,16 @@ export default function ProjectPage() {
                       fullWidth
                       multiline
                       minRows={2}
-                      placeholder="e.g. Gentle camera push-in, leaves sway in the wind, soft cinematic lighting"
-                      helperText="Describes how the still should move (camera, wind, people walking…). Falls back to narration if empty. Real Wan2.1 needs FAL_KEY or REPLICATE_API_TOKEN in .env."
+                      placeholder={
+                        draft.animation === "wan_t2v"
+                          ? "e.g. A lantern sways in a dark hallway as fog rolls across the floor"
+                          : "e.g. Gentle camera push-in, leaves sway in the wind, soft cinematic lighting"
+                      }
+                      helperText={
+                        draft.animation === "wan_t2v"
+                          ? "Describes the whole clip. No still image is required. Runs locally with Diffusers or the official Wan script, not ComfyUI. Falls back to narration if empty."
+                          : "Describes how the still should move (camera, wind, people walking…). Falls back to narration if empty. Real Wan2.1 needs FAL_KEY or REPLICATE_API_TOKEN in .env."
+                      }
                     />
                   </>
                 )}
@@ -1265,6 +1305,22 @@ export default function ProjectPage() {
                     disabled={ttsOne.isPending || !draft.text.trim()}
                   >
                     Generate voice
+                  </Button>
+                  <Button
+                    variant="outlined"
+                    startIcon={<MovieCreationIcon />}
+                    component={RouterLink}
+                    to={`/projects/${projectId}/export?slide=${selected.id}`}
+                    onClick={async (e) => {
+                      try {
+                        await saveDraftIfNeeded(draftRef.current);
+                      } catch (err) {
+                        e.preventDefault();
+                        setError(errMessage(err));
+                      }
+                    }}
+                  >
+                    Generate this slide
                   </Button>
                   <Button
                     variant="text"
