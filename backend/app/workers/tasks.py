@@ -177,6 +177,7 @@ def render_video(self, job_id: str) -> dict:
     storage = get_storage()
     work_dir = Path(settings.storage_root) / "tmp" / job_id
     used_t2v = False
+    used_i2v = False
     try:
         job = db.get(VideoJob, UUID(job_id))
         if not job:
@@ -228,6 +229,8 @@ def render_video(self, job_id: str) -> dict:
             if anim == "wan_t2v" and not settings.wan_t2v_enabled:
                 anim = "ken_burns"
             entries = s.all_image_entries()
+            if anim == "wan_i2v":
+                used_i2v = True
             if anim == "wan_t2v":
                 used_t2v = True
             elif not entries:
@@ -393,6 +396,13 @@ def render_video(self, job_id: str) -> dict:
                 from app.services.wan_t2v import unload_t2v
 
                 unload_t2v()
+            except Exception:
+                pass
+        if used_i2v:
+            try:
+                from app.services.wan_i2v import unload_i2v
+
+                unload_i2v()
             except Exception:
                 pass
         if work_dir.exists():

@@ -50,6 +50,24 @@ _pipe = None
 _pipe_model_id: str | None = None
 
 
+def unload_i2v() -> None:
+    """Drop the cached pipeline so the next GPU stage can load."""
+    global _pipe, _pipe_model_id
+    with _pipe_lock:
+        _pipe = None
+        _pipe_model_id = None
+    try:
+        import gc
+
+        import torch
+
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        logger.info("Wan I2V unload skipped")
+
+
 @dataclass
 class WanI2VResult:
     output_path: Path

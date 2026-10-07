@@ -34,6 +34,7 @@ echo.
 echo ACE-Step API: http://127.0.0.1:8001
 echo Health:      http://127.0.0.1:8001/health
 echo Leave this window open. Close it to stop the server.
+echo After each song the model leaves the GPU until the next song.
 echo.
 
 cd /d "%ACE_DIR%"

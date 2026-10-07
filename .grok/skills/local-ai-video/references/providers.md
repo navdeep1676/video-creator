@@ -168,6 +168,8 @@ AMD: the default LM backend `vllm` is CUDA-oriented. Document `ACESTEP_LM_BACKEN
 
 Unload ComfyUI (`POST /free`) before the first ACE-Step request of a project.
 
+When a `/release_task` job finishes, success or failure, the server moves the DiT, VAE, and text encoder back to CPU and clears the accelerator cache. The next music request loads them again. This runs only when `ACESTEP_QUEUE_WORKERS` is 1, the default.
+
 ## TTS
 
 `TTSProvider.synthesize(text, language, voice, output_path) -> duration_seconds`.
