@@ -7,11 +7,14 @@ from pathlib import Path
 import pytest
 
 from app.services.wan_t2v import (
+    _clear_worker_state,
+    _write_worker_state,
     build_cli_command,
     choose_size,
     generate_t2v,
     resolve_backend,
     wan_t2v_status,
+    worker_load_state,
 )
 
 
@@ -107,6 +110,24 @@ def test_portrait_frame_uses_tall_size(monkeypatch):
     settings = get_settings()
     assert choose_size(settings, 1920, 1080) == (832, 480)
     assert choose_size(settings, 1080, 1920) == (480, 832)
+    get_settings.cache_clear()
+
+
+def test_worker_load_state_follows_the_live_worker(tmp_path: Path, monkeypatch):
+    get_settings = _clear_settings(monkeypatch, STORAGE_ROOT=str(tmp_path))
+    assert worker_load_state() == "idle"
+    _write_worker_state("loaded")
+    assert worker_load_state() == "loaded"
+    status = wan_t2v_status()
+    assert status["load_state"] == "loaded"
+    assert status["loaded"] is True
+    (tmp_path / "wan_t2v_worker.json").write_text(
+        '{"state": "loaded", "pid": 2147483647, "model_id": "x"}',
+        encoding="utf-8",
+    )
+    assert worker_load_state() == "idle"
+    _clear_worker_state()
+    assert worker_load_state() == "idle"
     get_settings.cache_clear()
 
 

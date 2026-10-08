@@ -13,6 +13,7 @@ GPU through torch.cuda, so this module never shells out to nvidia-smi.
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import os
 import subprocess
@@ -157,6 +158,7 @@ def wan_t2v_status() -> dict:
     else:
         ready = backend == "mock"
 
+    load_state = worker_load_state()
     return {
         "enabled": settings.wan_t2v_enabled,
         "backend": backend,
@@ -176,6 +178,8 @@ def wan_t2v_status() -> dict:
         "ckpt_dir": settings.wan_t2v_ckpt_dir or None,
         "cli_script": _cli_script(settings) or None,
         "ready": ready,
+        "load_state": load_state,
+        "loaded": load_state == "loaded",
         "error": error,
         "hint": (
             None
@@ -241,9 +245,88 @@ def cache_key_for(
     return h.hexdigest()[:32]
 
 
+def _worker_state_path() -> Path:
+    return Path(get_settings().storage_root) / "wan_t2v_worker.json"
+
+
+def _pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        import ctypes
+
+        handle = ctypes.windll.kernel32.OpenProcess(0x1000, False, int(pid))
+        if not handle:
+            return False
+        ctypes.windll.kernel32.CloseHandle(handle)
+        return True
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def _write_worker_state(state: str) -> None:
+    path = _worker_state_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "state": state,
+                "pid": os.getpid(),
+                "model_id": get_settings().wan_t2v_model_id,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _clear_worker_state() -> None:
+    path = _worker_state_path()
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        logger.info("Wan T2V worker state file was not removed")
+
+
+def worker_load_state() -> str:
+    """idle, loading, or loaded. A dead worker pid counts as idle."""
+    path = _worker_state_path()
+    if not path.is_file():
+        return "idle"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        pid = int(data.get("pid") or 0)
+        state = str(data.get("state") or "")
+    except (OSError, json.JSONDecodeError, TypeError, ValueError):
+        return "idle"
+    if state not in {"loading", "loaded"} or not _pid_alive(pid):
+        return "idle"
+    return state
+
+
+def preload_t2v(progress_cb: ProgressCb | None = None) -> None:
+    """Load the Diffusers pipeline into this process and keep it until unload_t2v()."""
+    settings = get_settings()
+    backend = resolve_backend()
+    if backend != "diffusers":
+        raise RuntimeError(f"Wan T2V preload requires the diffusers backend (got {backend})")
+
+    def progress(msg: str) -> None:
+        if progress_cb:
+            progress_cb(msg)
+        logger.info("wan_t2v[%s]: %s", backend, msg)
+
+    _write_worker_state("loading")
+    _load_diffusers_pipe(settings, progress)
+    progress("pipeline resident")
+
+
 def unload_t2v() -> None:
     """Drop the cached pipeline so the next GPU stage can load."""
     global _pipe, _pipe_model_id
+    _clear_worker_state()
     with _pipe_lock:
         _pipe = None
         _pipe_model_id = None
@@ -371,21 +454,13 @@ def _inference_device(settings: Settings) -> str:
     return "cuda" if _gpu_available() else "cpu"
 
 
-def _generate_diffusers(
-    output_path: Path,
-    prompt: str,
-    negative_prompt: str,
-    settings: Settings,
-    width: int,
-    height: int,
-    progress: ProgressCb,
-) -> None:
+def _load_diffusers_pipe(settings: Settings, progress: ProgressCb):
+    """Return the process-wide Wan pipeline, loading it on first use."""
     global _pipe, _pipe_model_id
 
     try:
         import torch
         from diffusers import AutoencoderKLWan, WanPipeline
-        from diffusers.utils import export_to_video
     except ImportError as exc:
         raise RuntimeError(
             "Wan T2V diffusers backend requires torch, diffusers, and transformers. "
@@ -398,10 +473,9 @@ def _generate_diffusers(
         logger.warning("Wan T2V-1.3B on CPU is extremely slow")
 
     dtype = torch.bfloat16 if device == "cuda" else torch.float32
-    frames = _frame_count(settings.wan_t2v_num_frames)
-
     with _pipe_lock:
         if _pipe is None or _pipe_model_id != model_id:
+            _write_worker_state("loading")
             progress(f"loading model {model_id}")
             vae = AutoencoderKLWan.from_pretrained(model_id, subfolder="vae", torch_dtype=torch.float32)
             pipe = WanPipeline.from_pretrained(model_id, vae=vae, torch_dtype=dtype)
@@ -411,8 +485,24 @@ def _generate_diffusers(
                 pipe.to(device)
             _pipe = pipe
             _pipe_model_id = model_id
-        pipe = _pipe
+        _write_worker_state("loaded")
+        return _pipe
 
+
+def _generate_diffusers(
+    output_path: Path,
+    prompt: str,
+    negative_prompt: str,
+    settings: Settings,
+    width: int,
+    height: int,
+    progress: ProgressCb,
+) -> None:
+    import torch
+    from diffusers.utils import export_to_video
+
+    pipe = _load_diffusers_pipe(settings, progress)
+    frames = _frame_count(settings.wan_t2v_num_frames)
     shift = float(settings.wan_t2v_flow_shift)
     try:
         pipe.scheduler = pipe.scheduler.__class__.from_config(pipe.scheduler.config, flow_shift=shift)

@@ -42,6 +42,7 @@ import SlideList from "../components/SlideList";
 import PageHeader from "../components/PageHeader";
 import ProjectFormDialog, { type ProjectFormValues } from "../components/ProjectFormDialog";
 import StoryPanel from "../components/StoryPanel";
+import WanT2vBanner from "../components/WanT2vBanner";
 import ConfirmDialog from "../components/ConfirmDialog";
 import type { Project } from "../types/project";
 import { getAspectOption } from "../types/aspectRatio";
@@ -124,49 +125,6 @@ function draftFromSlide(slide: Slide): Draft {
 
 function languageForVoice(voiceId: string, voices: Voice[]): string {
   return voices.find((v) => v.id === voiceId)?.language || "en";
-}
-
-type WanI2vStatus = {
-  enabled: boolean;
-  backend: string;
-  mock: boolean;
-  real_ai?: boolean;
-  fal_configured?: boolean;
-  replicate_configured?: boolean;
-  ready: boolean;
-  error?: string | null;
-  hint?: string | null;
-};
-
-function WanT2vBanner() {
-  const { data } = useQuery({
-    queryKey: ["wan-t2v-status"],
-    queryFn: async () => (await api.get("/video/wan-t2v/status")).data as WanI2vStatus,
-    staleTime: 30_000,
-  });
-  if (!data) return null;
-  if (data.real_ai) {
-    return (
-      <Alert severity="success" variant="outlined">
-        Wan2.1 T2V 1.3B runs locally via <strong>{data.backend}</strong>. ComfyUI is not used.
-        Export writes a 480p clip from the prompt. The first run downloads the weights.
-      </Alert>
-    );
-  }
-  if (data.mock) {
-    return (
-      <Alert severity="warning" variant="outlined">
-        <strong>Mock mode</strong> — this is a solid-color stand-in, not Wan2.1. Set{" "}
-        <code>WAN_T2V_MOCK=false</code> and install the local 1.3B weights.
-      </Alert>
-    );
-  }
-  return (
-    <Alert severity="error" variant="outlined">
-      Wan2.1 T2V 1.3B is not ready. {data.error || data.hint || "Install the local model."} This
-      path does not use ComfyUI.
-    </Alert>
-  );
 }
 
 function isDraftDirty(draft: Draft, slide: Slide | null | undefined): boolean {

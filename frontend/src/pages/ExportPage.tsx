@@ -41,6 +41,7 @@ import VideoLibraryIcon from "@mui/icons-material/VideoLibrary";
 import Filter1Icon from "@mui/icons-material/Filter1";
 import { api, errMessage, mediaUrl } from "../api/client";
 import PageHeader from "../components/PageHeader";
+import WanT2vBanner from "../components/WanT2vBanner";
 import type { Project } from "../types/project";
 import { getAspectOption } from "../types/aspectRatio";
 import { brandColors } from "../theme";
@@ -834,6 +835,9 @@ export default function ExportPage() {
               </Typography>
             )}
 
+            <Box sx={{ mb: 2 }}>
+              <WanT2vBanner />
+            </Box>
             <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
               <Button
                 variant="contained"
