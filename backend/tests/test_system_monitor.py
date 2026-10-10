@@ -24,8 +24,9 @@ from app.services.host_stats import (
 )
 
 
-def test_local_story_uses_the_gpu_only_while_it_runs():
-    assert story_uses_gpu({"llm_model": "local/qwen3:8b"}) is True
+def test_story_writing_does_not_use_the_gpu():
+    assert story_uses_gpu({"llm_model": "gpt-5.4-mini"}) is False
+    assert story_uses_gpu({"llm_model": "local/qwen2.5:7b"}) is False
     running = stage_job_item(
         job_id="1",
         project_id="p",
@@ -34,34 +35,11 @@ def test_local_story_uses_the_gpu_only_while_it_runs():
         status="running",
         progress=0,
         detail="The model is writing the story",
-        payload={"llm_model": "local/qwen3:8b"},
-    )
-    waiting = stage_job_item(
-        job_id="1",
-        project_id="p",
-        project_title="Lamp",
-        stage="story",
-        status="queued",
-        progress=0,
-        detail=None,
-        payload={"llm_model": "local/qwen3:8b"},
-    )
-    cloud = stage_job_item(
-        job_id="1",
-        project_id="p",
-        project_title="Lamp",
-        stage="story",
-        status="running",
-        progress=0,
-        detail=None,
         payload={"llm_model": "gpt-5.4-mini"},
     )
-    assert running["on_gpu"] is True
-    assert running["uses_gpu"] is True
-    assert waiting["on_gpu"] is False
-    assert waiting["uses_gpu"] is True
-    assert cloud["on_gpu"] is False
-    assert cloud["uses_gpu"] is False
+    assert running is not None
+    assert running["on_gpu"] is False
+    assert running["uses_gpu"] is False
 
 
 def test_images_and_music_are_gpu_work_and_voice_is_not():

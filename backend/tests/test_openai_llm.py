@@ -74,6 +74,8 @@ def test_build_llm_provider_routes_openai():
     assert provider.settings.openai_model == "gpt-4.1-mini"
     assert not isinstance(build_llm_provider(settings, "openrouter/free"), OpenAILLMProvider)
     assert not isinstance(build_llm_provider(settings, "gemini-3.5-flash"), OpenAILLMProvider)
+    with pytest.raises(ProviderUnavailable, match="Local story models"):
+        build_llm_provider(settings, "local/qwen2.5:7b")
 
 
 def test_custom_openai_model_joins_the_catalog():

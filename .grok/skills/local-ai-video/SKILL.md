@@ -25,7 +25,7 @@ Contracts live in the reference files. Do not restate them elsewhere.
 
 ## Rules that override the rest of the prompt
 
-- LLM calls go through `LLMProvider`. `OpenRouterLLMProvider` handles OpenRouter ids. `GeminiLLMProvider` handles ids that start with `gemini-` and `GEMINI_API_KEY`. `OpenAILLMProvider` handles `gpt-`, `o`-series, and `chatgpt-` ids with `OPENAI_API_KEY`. `LocalLLMProvider` handles `local/` ids on an OpenAI-compatible server (`LOCAL_LLM_BASE_URL`). Do not add the Ollama Python package, a local Qwen process, or another vendor SDK.
+- LLM calls go through `LLMProvider`. `OpenRouterLLMProvider` handles OpenRouter ids. `GeminiLLMProvider` handles ids that start with `gemini-` and `GEMINI_API_KEY`. `OpenAILLMProvider` handles `gpt-`, `o`-series, and `chatgpt-` ids with `OPENAI_API_KEY`. Do not add a local story model, the Ollama Python package, or another vendor SDK. A `local/` model id is rejected.
 - Image, video, music, and FFmpeg stay local. Do not send images, clips, or audio to a paid cloud generator.
 - Do not assume NVIDIA or CUDA. Do not call `nvidia-smi`. Target AMD RX 9060 XT 16GB, 64GB RAM, ROCm/ComfyUI.
 - Never load the image model, Wan, and ACE-Step at the same time. Run the GPU stages in `references/providers.md` and unload between them.

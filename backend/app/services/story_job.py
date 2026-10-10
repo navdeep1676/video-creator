@@ -14,15 +14,8 @@ from app.config import Settings, get_settings
 from app.db.models import Project, Story, StoryCharacter, StoryJob, StoryLocation, StoryScene
 from app.db.session import SessionLocal
 from app.services.gemini_llm import GeminiLLMProvider, is_gemini_model
-from app.services.local_llm import (
-    LocalLLMProvider,
-    ensure_ollama_server,
-    is_local_model,
-    release_ollama_model,
-    should_manage_ollama,
-)
 from app.services.openai_llm import OpenAILLMProvider, is_openai_model
-from app.services.openrouter_llm import LLMProvider, OpenRouterLLMProvider
+from app.services.openrouter_llm import LLMProvider, OpenRouterLLMProvider, ProviderUnavailable
 from app.services.stage_job import begin_stage_job, report_progress
 from app.services.story_planner import StoryPlan, plan_story, plan_to_json
 from app.services.story_slides import replace_project_slides
@@ -34,9 +27,8 @@ logger = logging.getLogger(__name__)
 def build_llm_provider(settings: Settings, model: str, override: LLMProvider | None = None) -> LLMProvider:
     if override is not None:
         return override
-    if is_local_model(model):
-        tuned = settings.model_copy(update={"local_llm_model": model})
-        return LocalLLMProvider(tuned)
+    if model.startswith("local/"):
+        raise ProviderUnavailable("Local story models are turned off. Choose OpenAI, Gemini, or OpenRouter.")
     if is_gemini_model(model):
         tuned = settings.model_copy(update={"gemini_model": model})
         return GeminiLLMProvider(tuned)
@@ -66,10 +58,6 @@ def execute_story_job(
             return
         model = str(job.payload.get("llm_model") or settings.openrouter_model)
         active = provider or build_llm_provider(settings, model)
-        manage_gpu = should_manage_ollama(settings, model, injected_provider=provider is not None)
-        if manage_gpu:
-            report_progress(session, job, 0, "Starting Qwen")
-            ensure_ollama_server(settings)
         report_progress(session, job, 0, "The model is writing the story")
         plan = plan_story(SimpleNamespace(**job.payload), active, settings)
         report_progress(session, job, 90, "Saving the story and scenes")
@@ -92,11 +80,6 @@ def execute_story_job(
             failed.error = str(exc)
             session.commit()
     finally:
-        if "manage_gpu" in locals() and manage_gpu:
-            try:
-                release_ollama_model(settings, model)
-            except Exception:
-                logger.exception("[STORY] Qwen did not unload")
         session.close()
 
 

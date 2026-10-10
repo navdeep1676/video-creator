@@ -1,7 +1,7 @@
 """Stop one stuck monitor row.
 
 Jobs are marked cancelled and their Celery task is revoked. A GPU program
-that is holding the card (ComfyUI, ACE-Step, Ollama, or the render worker)
+that is holding the card (ComfyUI, ACE-Step, or the render worker)
 is stopped too, because a solo worker blocked inside that program will not
 notice the cancel by itself.
 """
@@ -27,13 +27,12 @@ logger = logging.getLogger(__name__)
 PROCESS_STOP_IDS = {
     "ComfyUI": "process:comfyui",
     "ACE-Step": "process:ace-step",
-    "Ollama": "process:ollama",
     "Render worker": "process:render",
     "Task worker": "process:tasks",
 }
 
 _JOB_KINDS = {"story", "images", "music", "export", "voice"}
-_PROCESS_KINDS = {"comfyui", "ace-step", "ollama", "render", "tasks"}
+_PROCESS_KINDS = {"comfyui", "ace-step", "render", "tasks"}
 
 
 class StopError(ValueError):
@@ -127,7 +126,7 @@ def _stop_stage(session: Session, user_id: UUID, settings: Settings, stage: str,
     return {"stopped": True, "message": message}
 
 
-def _release_stage_gpu(settings: Settings, job: StoryJob, running: bool) -> str:
+def _release_stage_gpu(_settings: Settings, job: StoryJob, running: bool) -> str:
     if not running:
         return ""
     if job.stage == "images":
@@ -140,12 +139,6 @@ def _release_stage_gpu(settings: Settings, job: StoryJob, running: bool) -> str:
 
         stop_acestep_server()
         return "ACE-Step was stopped so the GPU is free"
-    model = str((job.payload or {}).get("llm_model") or "")
-    if job.stage == "story" and model.startswith("local/"):
-        from app.services.local_llm import release_ollama_model
-
-        release_ollama_model(settings, model)
-        return "The local model was unloaded"
     return ""
 
 
@@ -160,11 +153,6 @@ def _stop_process(settings: Settings, kind: str) -> str:
 
         stop_acestep_server()
         return "Stopped ACE-Step"
-    if kind == "ollama":
-        from app.services.local_llm import _stop_llama_server
-
-        _stop_llama_server()
-        return "Stopped the local model"
     if kind in {"render", "tasks"}:
         return _stop_worker(settings, kind)
     raise StopError("Unknown process")

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
@@ -14,6 +14,32 @@ logger = logging.getLogger(__name__)
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _aware(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
+
+
+def render_job_is_stuck(
+    started_at: datetime | None,
+    heartbeat_at: datetime | None,
+    now: datetime,
+    *,
+    stale_s: int,
+    hard_limit_s: int,
+) -> bool:
+    """A live Wan render heartbeats on every step. Fail only a silent or runaway job."""
+    now = _aware(now)
+    last = heartbeat_at or started_at
+    if last is None:
+        return False
+    if _aware(last) < now - timedelta(seconds=stale_s):
+        return True
+    if started_at is not None and _aware(started_at) < now - timedelta(seconds=hard_limit_s):
+        return True
+    return False
 
 
 def revoke_celery_task(task_id: str | None, *, terminate: bool = True) -> bool:

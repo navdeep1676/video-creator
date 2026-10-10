@@ -255,8 +255,6 @@ function ModelCard() {
         key_configured: boolean;
         gemini_key_configured?: boolean;
         openai_key_configured?: boolean;
-        local_available?: boolean;
-        local_base_url?: string;
         models: { id: string; name: string; provider?: string }[];
       },
   });
@@ -264,10 +262,7 @@ function ModelCard() {
   const models = catalog?.models ?? [];
   const openai = models.filter((model) => model.provider === "openai");
   const gemini = models.filter((model) => model.provider === "gemini");
-  const local = models.filter((model) => model.provider === "local");
-  const openRouter = models.filter(
-    (model) => model.provider !== "gemini" && model.provider !== "openai" && model.provider !== "local"
-  );
+  const openRouter = models.filter((model) => model.provider !== "gemini" && model.provider !== "openai");
 
   return (
     <Card sx={{ border: "1px solid", borderColor: "divider", maxWidth: 560 }}>
@@ -276,7 +271,7 @@ function ModelCard() {
           Story models
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-          Story generation uses a local model, OpenAI, Gemini, or a free OpenRouter text model. The default is{" "}
+          Story generation uses OpenAI, Gemini, or a free OpenRouter text model. The default is{" "}
           {catalog?.default_model || "openrouter/free"}.
         </Typography>
         {catalog && !catalog.openai_key_configured && (
@@ -294,27 +289,6 @@ function ModelCard() {
             OPENROUTER_API_KEY is not set. Listing models still works.
           </Alert>
         )}
-        {catalog && !catalog.local_available && (
-          <Alert severity="info" sx={{ mb: 2 }}>
-            No local model server is running at {catalog.local_base_url || "http://127.0.0.1:11434/v1"}. Start Ollama
-            or LM Studio to generate stories on this machine.
-          </Alert>
-        )}
-        <Typography variant="subtitle2" sx={{ mt: 1 }}>
-          Local
-        </Typography>
-        <Stack spacing={0.5} sx={{ mb: 1.5 }}>
-          {local.length === 0 && (
-            <Typography variant="body2" color="text.secondary">
-              None loaded
-            </Typography>
-          )}
-          {local.map((model) => (
-            <Typography key={model.id} variant="body2">
-              {model.name}
-            </Typography>
-          ))}
-        </Stack>
         <Typography variant="subtitle2" sx={{ mt: 1 }}>
           OpenAI
         </Typography>

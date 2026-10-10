@@ -32,10 +32,6 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     openai_base_url: str = "https://api.openai.com/v1"
     openai_model: str = "gpt-5.4-mini"
-    # OpenAI-compatible local server. Ollama uses http://127.0.0.1:11434/v1.
-    local_llm_base_url: str = "http://127.0.0.1:11434/v1"
-    local_llm_model: str = ""
-    local_llm_api_key: str = ""
     ffmpeg_path: str = ""
     ffprobe_path: str = ""
     comfyui_base_url: str = "http://127.0.0.1:8188"
@@ -45,8 +41,6 @@ class Settings(BaseSettings):
     comfyui_manage_process: bool = True
     comfyui_dir: str = ""
     comfyui_python: str = ""
-    # Local Ollama starts for a Qwen story and the model is unloaded when the story ends.
-    ollama_manage_process: bool = True
     image_workflow: str = "configs/workflows/qwen_image_2_1_t2i.json"
     image_workflow_map: str = "configs/workflows/qwen_image_2_1_t2i.map.json"
     image_model: str = "qwen_image_2.1_int8_convrot.safetensors"
@@ -163,9 +157,14 @@ class Settings(BaseSettings):
     wan_t2v_python: str = ""
 
     celery_task_always_eager: bool = False
-    render_hard_limit_s: int = 1800
-    render_soft_limit_s: int = 1700
-    visibility_timeout_s: int = 3600
+    # Wan at 1280-wide can take several minutes per step. The hard limit is the
+    # longest a render may run. A silent worker is reclaimed sooner.
+    render_hard_limit_s: int = 28800
+    render_soft_limit_s: int = 28200
+    render_heartbeat_stale_s: int = 1800
+    # Redis redelivers an unacked task after this. Keep it above render_hard_limit_s
+    # so a second worker cannot start the same Wan clip while the first is sampling.
+    visibility_timeout_s: int = 32400
     stuck_job_grace_s: int = 120
     keep_completed_jobs: int = 3
 

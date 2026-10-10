@@ -153,8 +153,6 @@ export default function StoryPanel({ projectId, defaultTopic }: { projectId: str
         key_configured: boolean;
         gemini_key_configured?: boolean;
         openai_key_configured?: boolean;
-        local_available?: boolean;
-        local_base_url?: string;
         models: FreeModel[];
       },
     refetchOnMount: "always",
@@ -180,14 +178,13 @@ export default function StoryPanel({ projectId, defaultTopic }: { projectId: str
 
   useEffect(() => {
     if (modelTouched.current) return;
-    const localDefault = (modelsQuery.data?.models ?? []).find((item) => item.provider === "local");
-    if (localDefault) {
-      setModel(localDefault.id);
+    const models = modelsQuery.data?.models ?? [];
+    const savedModel = storyQuery.data?.settings?.llm_model;
+    if (savedModel && models.some((item) => item.id === savedModel)) {
+      setModel(savedModel);
       return;
     }
-    const savedModel = storyQuery.data?.settings?.llm_model;
-    if (savedModel) setModel(savedModel);
-    else if (modelsQuery.data?.default_model) setModel(modelsQuery.data.default_model);
+    if (modelsQuery.data?.default_model) setModel(modelsQuery.data.default_model);
   }, [modelsQuery.data?.models, modelsQuery.data?.default_model, storyQuery.data?.settings?.llm_model]);
 
   const showSchema = async () => {
@@ -342,19 +339,14 @@ export default function StoryPanel({ projectId, defaultTopic }: { projectId: str
   const models = modelsQuery.data?.models ?? [];
   const openaiModels = models.filter((item) => item.provider === "openai");
   const geminiModels = models.filter((item) => item.provider === "gemini");
-  const localModels = models.filter((item) => item.provider === "local");
-  const openRouterModels = models.filter(
-    (item) => item.provider !== "gemini" && item.provider !== "openai" && item.provider !== "local"
-  );
+  const openRouterModels = models.filter((item) => item.provider !== "gemini" && item.provider !== "openai");
   const selectedModel = models.find((item) => item.id === model);
   const missingGeminiKey = selectedModel?.provider === "gemini" && !modelsQuery.data?.gemini_key_configured;
   const missingOpenAIKey = selectedModel?.provider === "openai" && !modelsQuery.data?.openai_key_configured;
-  const missingLocal = selectedModel?.provider === "local" && modelsQuery.data && !modelsQuery.data.local_available;
   const missingOpenRouterKey =
     !!selectedModel &&
     selectedModel.provider !== "gemini" &&
     selectedModel.provider !== "openai" &&
-    selectedModel.provider !== "local" &&
     modelsQuery.data &&
     !modelsQuery.data.key_configured;
   const audioSrc = mediaUrl(storyQuery.data?.music?.audio_url);
@@ -415,12 +407,6 @@ export default function StoryPanel({ projectId, defaultTopic }: { projectId: str
             )}
             {missingOpenAIKey && (
               <Alert severity="warning">Add OPENAI_API_KEY to the environment before generating a story with OpenAI.</Alert>
-            )}
-            {missingLocal && (
-              <Alert severity="warning">
-                The local model server is not running at {modelsQuery.data?.local_base_url || "http://127.0.0.1:11434/v1"}.
-                Start Ollama or LM Studio, then generate the story again.
-              </Alert>
             )}
             {formError && (
               <Alert severity="error" onClose={() => setFormError("")}>
@@ -533,12 +519,6 @@ export default function StoryPanel({ projectId, defaultTopic }: { projectId: str
                     {item.name}
                   </MenuItem>
                 ))}
-                {localModels.length > 0 && <ListSubheader>Local</ListSubheader>}
-                {localModels.map((item) => (
-                  <MenuItem key={item.id} value={item.id}>
-                    {item.name}
-                  </MenuItem>
-                ))}
                 {openRouterModels.length > 0 && <ListSubheader>OpenRouter</ListSubheader>}
                 {openRouterModels.map((item) => (
                   <MenuItem key={item.id} value={item.id}>
@@ -547,12 +527,6 @@ export default function StoryPanel({ projectId, defaultTopic }: { projectId: str
                 ))}
               </TextField>
             </Stack>
-            {localModels.length === 0 && (
-              <Typography variant="caption" color="text.secondary">
-                Local models appear in the Model list when Ollama or LM Studio is running at{" "}
-                {modelsQuery.data?.local_base_url || "http://127.0.0.1:11434/v1"}.
-              </Typography>
-            )}
             <Button
               variant="contained"
               disabled={planning || (!topic.trim() && !storyJson.trim())}
@@ -568,9 +542,8 @@ export default function StoryPanel({ projectId, defaultTopic }: { projectId: str
                     : "Generate story"}
             </Button>
             <Typography variant="caption" color="text.secondary">
-              Choose a Local model to write the story on this PC. Story planning, music, and scene images run on the
-              Celery worker. That worker must listen to story-generation, music-generation, and image-generation. Wan
-              stays on the render worker.
+              Story planning, music, and scene images run on the Celery worker. That worker must listen to
+              story-generation, music-generation, and image-generation. Wan stays on the render worker.
             </Typography>
             <StageProgress
               job={job}

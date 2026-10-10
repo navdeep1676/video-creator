@@ -31,7 +31,6 @@ from app.dependencies import get_current_user
 from app.services.media_tokens import signed_url_path
 from app.services.music_job import latest_job, music_storage_key
 from app.services.gemini_llm import gemini_catalog_rows
-from app.services.local_llm import configured_local_model, local_catalog_rows
 from app.services.openai_llm import openai_catalog_rows
 from app.services.openrouter_catalog import load_catalog
 from app.services.stage_job import dispatch_stage_task, job_view
@@ -579,11 +578,10 @@ def enqueue_story(
     scene_count = _check_scene_count(body.scene_count.strip())
     settings = get_settings()
     catalog = load_catalog(settings)
-    model = (body.llm_model or "").strip() or configured_local_model(settings) or settings.openrouter_model
-    local_rows, _local_up = local_catalog_rows(settings)
+    model = (body.llm_model or "").strip() or settings.openrouter_model
     allowed = catalog.ids() | {row["id"] for row in gemini_catalog_rows(settings)} | {
         row["id"] for row in openai_catalog_rows(settings)
-    } | {row["id"] for row in local_rows}
+    }
     if model not in allowed:
         raise AppError("VALIDATION", "Choose a text model from the catalog", 400)
     active = db.scalar(

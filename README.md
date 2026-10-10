@@ -13,7 +13,7 @@
 - Async Deepgram TTS (mock mode without API key)
 - Background FFmpeg render (fade + concat timeline, subtitles, optional BGM)
 - Download MP4 + signed media URLs for preview
-- Original horror and kids stories from a local OpenAI-compatible model, OpenRouter, Gemini, or OpenAI (`POST /api/v1/projects/{id}/story`). Local models use `LOCAL_LLM_BASE_URL` (Ollama on port 11434, or LM Studio). Cloud models need `OPENROUTER_API_KEY`, `GEMINI_API_KEY`, or `OPENAI_API_KEY`. Models are listed at `/api/v1/models`.
+- Original horror and kids stories from OpenRouter, Gemini, or OpenAI (`POST /api/v1/projects/{id}/story`). Cloud models need `OPENROUTER_API_KEY`, `GEMINI_API_KEY`, or `OPENAI_API_KEY`. Models are listed at `/api/v1/models`.
 - Local ACE-Step 1.5 music (`POST /api/v1/projects/{id}/music/generate`) once a story exists. The server starts for that request and exits when the track is saved, so it does not hold the GPU. `music_mode=none` skips it.
 - Local Qwen-Image-2.1 scene stills through ComfyUI (`POST /api/v1/projects/{id}/images/generate`). ComfyUI stays on port 8188.
 
@@ -142,7 +142,7 @@ AI Motion clips are cached under `uploads/{project_id}/i2v_cache/`. Text-to-vide
 
 ## Local development (without full compose)
 
-On this PC, one command starts Postgres on 5433, Redis on 6380, the API, both Celery workers, beat, and the Vite app. ComfyUI, Ollama, and ACE-Step are not started. Each one starts for its own Generate click and stops when that job finishes, so it does not hold the GPU.
+On this PC, one command starts Postgres on 5433, Redis on 6380, the API, both Celery workers, beat, and the Vite app. ComfyUI and ACE-Step are not started. Each one starts for its own Generate click and stops when that job finishes, so it does not hold the GPU.
 
 ```bat
 naratto start
@@ -194,16 +194,6 @@ npm run dev
 ```
 
 Vite proxies `/api` to `http://localhost:8000`.
-
-### Local story model
-
-Install [Ollama](https://ollama.com) and pull a Qwen instruct model that fits the GPU:
-
-```bash
-ollama pull qwen2.5:7b
-```
-
-Set `LOCAL_LLM_MODEL=local/qwen2.5:7b` in `.env`. That id becomes the story default and shows under Local in the Model menu. A local story starts Ollama if it is not already listening on `http://127.0.0.1:11434/v1`, then unloads Qwen and stops its runner when the story ends. LM Studio on port 1234 is left running: point `LOCAL_LLM_BASE_URL` at `http://127.0.0.1:1234/v1` and set `LOCAL_LLM_MODEL` to a loaded model id.
 
 ## Architecture
 

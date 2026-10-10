@@ -1,7 +1,7 @@
 """Running Naratto jobs for the header monitor, marked GPU or not.
 
 A job is on the GPU only while that work is actually using it. Queued GPU
-work stays off the GPU until it starts. Voice, FFmpeg, and cloud story
+work stays off the GPU until it starts. Voice, FFmpeg, and story
 writing never use the GPU.
 """
 
@@ -28,9 +28,9 @@ _GPU_EXTRA_TTL_S = 20.0
 
 
 def story_uses_gpu(payload: dict | None) -> bool:
-    if not isinstance(payload, dict):
-        return False
-    return str(payload.get("llm_model") or "").startswith("local/")
+    """Story text is written by a cloud model, so it does not use the GPU."""
+    del payload
+    return False
 
 
 def render_uses_gpu(stage: str | None) -> bool:

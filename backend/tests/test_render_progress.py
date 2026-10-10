@@ -1,9 +1,10 @@
 """Progress math for the render bar. No GPU."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 from app.services.ace_step import ace_step_percent
+from app.services.job_control import render_job_is_stuck
 from app.services.render_progress import wan_clip_update
 from app.services.stage_job import job_view
 
@@ -35,6 +36,29 @@ def test_wan_stage_fits_the_column():
     _percent, stage = wan_clip_update(9, 12, "step 3/50 " + ("m" * 80))
     assert len(stage) <= 64
     assert stage.startswith("wan 10/12 step 3/50")
+
+
+def test_a_live_wan_render_is_not_reclaimed_while_steps_are_reporting():
+    now = datetime(2026, 10, 10, 18, 10, tzinfo=timezone.utc)
+    started = now - timedelta(minutes=40)
+    heartbeat = now - timedelta(minutes=4)
+    assert (
+        render_job_is_stuck(started, heartbeat, now, stale_s=1800, hard_limit_s=28800) is False
+    )
+
+
+def test_a_silent_render_is_reclaimed():
+    now = datetime(2026, 10, 10, 18, 10, tzinfo=timezone.utc)
+    started = now - timedelta(minutes=50)
+    heartbeat = now - timedelta(minutes=31)
+    assert render_job_is_stuck(started, heartbeat, now, stale_s=1800, hard_limit_s=28800) is True
+
+
+def test_a_render_past_the_hard_limit_is_reclaimed_even_with_a_fresh_heartbeat():
+    now = datetime(2026, 10, 10, 18, 10, tzinfo=timezone.utc)
+    started = now - timedelta(hours=8, minutes=1)
+    heartbeat = now - timedelta(minutes=1)
+    assert render_job_is_stuck(started, heartbeat, now, stale_s=1800, hard_limit_s=28800) is True
 
 
 def test_ace_percent_reads_a_fraction_or_a_percent():

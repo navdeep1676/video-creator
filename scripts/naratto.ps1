@@ -138,7 +138,7 @@ function Stop-Matching([string]$Pattern) {
 function Stop-NarattoApp {
     Write-Step "Stopping Naratto app processes"
     $map = Read-PidMap
-    foreach ($name in @("render", "comfy", "ace", "tasks", "beat", "api", "frontend", "ollama")) {
+    foreach ($name in @("render", "comfy", "ace", "tasks", "beat", "api", "frontend")) {
         if ($map.ContainsKey($name)) { Stop-ProcessTree $map[$name] }
     }
     $py = [regex]::Escape($Python)
@@ -194,7 +194,6 @@ function Show-Status {
     Get-ServiceLine "redis" 6380 "naratto-redis"
     Get-ServiceLine "api" 8000 "http://127.0.0.1:8000/docs"
     Get-ServiceLine "frontend" 5173 "http://127.0.0.1:5173"
-    Get-ServiceLine "ollama" 11434 "qwen2.5:7b"
     Get-ServiceLine "comfyui" 8188 "scene images"
     Get-ServiceLine "ace-step" 8001 "music"
     $map = Read-PidMap
@@ -256,7 +255,7 @@ function Start-NarattoApp {
     if ((Get-ListenerProcessId 8000) -eq 0) {
         Write-Step "Starting API on http://127.0.0.1:8000"
         $started["api"] = Start-Logged "api" $Python @(
-            "-m", "uvicorn", "app.main:app", "--reload", "--host", "127.0.0.1", "--port", "8000"
+            "-m", "uvicorn", "app.main:app", "--reload", "--reload-dir", "backend/app", "--host", "127.0.0.1", "--port", "8000"
         ) $Root
     } else {
         Write-Step "API already listening on 8000"
@@ -325,8 +324,6 @@ function Start-NarattoApp {
         Write-Step "Render worker is already running. Use restart -PreloadWan to load Wan at startup."
     }
 
-    Write-Step "Ollama stays stopped until a local story. Qwen unloads when the story ends."
-
     $existing = Read-PidMap
     foreach ($key in $started.Keys) { $existing[$key] = $started[$key] }
     Write-PidMap $existing
@@ -357,7 +354,7 @@ switch ($Action) {
     "status" { Show-Status }
     "stop" {
         Stop-NarattoApp
-        Write-Step "Stopped. Postgres, Redis, and an already-running Ollama were left up."
+        Write-Step "Stopped. Postgres and Redis were left up."
         Show-Status
     }
     "restart" {

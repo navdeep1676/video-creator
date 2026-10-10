@@ -17,6 +17,7 @@ from app.services.aspect_ratios import DEFAULT_ASPECT_RATIO, canvas_for_quality,
 from app.services.duration import effective_duration_ms
 from app.services.export_readiness import slides_for_render
 from app.services.ffmpeg_pipeline import RenderOptions, SlideMedia, render_project_video
+from app.services.job_control import render_job_is_stuck
 from app.services.music_job import music_storage_key
 from app.services.story_slides import align_story_slide_durations
 from app.services.stage_job import is_abandoned_inline_job
@@ -164,12 +165,15 @@ def generate_slide_tts(self, slide_id: str, force: bool = False) -> dict:
         db.close()
 
 
+_render_limits = get_settings()
+
+
 @celery_app.task(
     bind=True,
     name="app.workers.tasks.render_video",
     max_retries=1,
-    soft_time_limit=1700,
-    time_limit=1800,
+    soft_time_limit=_render_limits.render_soft_limit_s,
+    time_limit=_render_limits.render_hard_limit_s,
     acks_late=True,
 )
 def render_video(self, job_id: str) -> dict:
@@ -477,12 +481,18 @@ def reclaim_stuck_jobs() -> dict:
     settings = get_settings()
     db = SessionLocal()
     try:
-        cutoff = utcnow() - timedelta(seconds=settings.render_hard_limit_s + settings.stuck_job_grace_s)
-        stuck = db.scalars(
-            select(VideoJob).where(VideoJob.status == "processing", VideoJob.started_at < cutoff)
-        ).all()
+        now = utcnow()
+        processing = db.scalars(select(VideoJob).where(VideoJob.status == "processing")).all()
         count = 0
-        for job in stuck:
+        for job in processing:
+            if not render_job_is_stuck(
+                job.started_at,
+                job.heartbeat_at,
+                now,
+                stale_s=settings.render_heartbeat_stale_s,
+                hard_limit_s=settings.render_hard_limit_s,
+            ):
+                continue
             job.status = "failed"
             job.error_code = "STUCK_RECLAIMED"
             job.error_message = "Job exceeded maximum processing time without completion"

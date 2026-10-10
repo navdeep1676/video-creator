@@ -63,19 +63,7 @@ Missing `OPENAI_API_KEY` raises `ProviderUnavailable` before the HTTP call. `GET
 
 OpenAI is remote, so it is not a local GPU stage.
 
-## Local model
-
-Story model ids that start with `local/` use `LocalLLMProvider`. The id `local/qwen2.5:7b` calls the model `qwen2.5:7b`.
-
-`POST {LOCAL_LLM_BASE_URL}/chat/completions`
-
-Default base is `http://127.0.0.1:11434/v1` (Ollama). LM Studio is `http://127.0.0.1:1234/v1`. No API key. When `LOCAL_LLM_API_KEY` is set, send `Authorization: Bearer`.
-
-Body matches the OpenAI chat body. On HTTP 400 for `response_format` or `temperature`, retry once without the rejected field. Ollama (`11434` in the base URL) also gets `keep_alive: 0` so the model leaves VRAM before ComfyUI, Wan, or ACE-Step.
-
-`GET {LOCAL_LLM_BASE_URL}/models` fills the Local group. A stopped server leaves the group empty and does not fail the rest of `GET /api/v1/models`. `LOCAL_LLM_MODEL` is listed even when the server is down.
-
-A connection error raises `ProviderUnavailable` and names the base URL. Do not download a model from this app.
+Story text stays on OpenRouter, Gemini, or OpenAI. A model id that starts with `local/` raises `ProviderUnavailable`. Do not add Ollama, LM Studio, or another local story server.
 
 Missing `OPENROUTER_API_KEY` raises `ProviderUnavailable` on chat calls. Listing models does not need a key. Tests inject a fake that returns fixture JSON.
 
@@ -182,7 +170,7 @@ No network TTS. Hindi, English, Hinglish, and male / female / child are voice id
 
 Run in this order for a full generate. Do not overlap them.
 
-1. LLM planning through a local model, OpenRouter, Gemini, or OpenAI. A local model uses the GPU; `keep_alive: 0` unloads Ollama before the next stage.
+1. LLM planning through OpenRouter, Gemini, or OpenAI. Story text does not use the GPU.
 2. ComfyUI character references, then scene images. Then `POST /free`.
 3. ComfyUI Wan for `video` scenes only. Then `POST /free`.
 4. ACE-Step. One track per project.

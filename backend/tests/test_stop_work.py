@@ -14,7 +14,7 @@ import pytest
 def test_known_gpu_programs_can_be_stopped_and_other_processes_cannot():
     assert process_stop_id("ComfyUI") == "process:comfyui"
     assert process_stop_id("ACE-Step") == "process:ace-step"
-    assert process_stop_id("Ollama") == "process:ollama"
+    assert process_stop_id("Ollama") is None
     assert process_stop_id("Render worker") == "process:render"
     assert process_stop_id("Task worker") == "process:tasks"
     assert process_stop_id("chrome") is None
