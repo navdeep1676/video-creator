@@ -24,9 +24,11 @@
     "class_type": "TextEncodeQwenImage21",
     "inputs": {
       "clip": ["2", 0],
+      "vae": ["3", 0],
       "prompt": "",
       "negative_prompt": "",
-      "resolution": 1024
+      "resolution": 1024,
+      "images.image_1": ["9", 0]
     }
   },
   "5": {
@@ -43,7 +45,7 @@
       "model": ["1", 0],
       "positive": ["4", 0],
       "negative": ["4", 1],
-      "latent_image": ["5", 0],
+      "latent_image": ["4", 2],
       "seed": 1,
       "steps": 25,
       "cfg": 1.0,
@@ -64,6 +66,12 @@
     "inputs": {
       "images": ["7", 0],
       "filename_prefix": "Naratto/scene"
+    }
+  },
+  "9": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": ""
     }
   }
 }

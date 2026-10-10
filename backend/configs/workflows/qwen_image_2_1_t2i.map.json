@@ -10,5 +10,6 @@
   "height": "5.inputs.height",
   "steps": "6.inputs.steps",
   "cfg": "6.inputs.cfg",
-  "filename_prefix": "8.inputs.filename_prefix"
+  "filename_prefix": "8.inputs.filename_prefix",
+  "reference_image": "9.inputs.image"
 }

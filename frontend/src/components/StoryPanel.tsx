@@ -379,15 +379,18 @@ export default function StoryPanel({ projectId, defaultTopic }: { projectId: str
   }, [jobStatus, projectId, qc]);
 
   useEffect(() => {
-    if (
-      previousImageStatus.current &&
-      previousImageStatus.current !== "succeeded" &&
-      imageJobStatus === "succeeded"
-    ) {
+    const previous = previousImageStatus.current;
+    const finished = imageJobStatus === "succeeded" || imageJobStatus === "failed";
+    if (previous && previous !== imageJobStatus && finished) {
       void qc.invalidateQueries({ queryKey: ["slides", projectId] });
     }
     previousImageStatus.current = imageJobStatus;
   }, [imageJobStatus, projectId, qc]);
+
+  useEffect(() => {
+    if (imageJobStatus !== "queued" && imageJobStatus !== "running") return;
+    void qc.invalidateQueries({ queryKey: ["slides", projectId] });
+  }, [imageJobStatus, imageJob?.progress, imageJob?.detail, storyQuery.dataUpdatedAt, projectId, qc]);
 
   useEffect(() => {
     if (planning || !story || scenes.length === 0 || !slidesQuery.isSuccess || slidesMatch) return;

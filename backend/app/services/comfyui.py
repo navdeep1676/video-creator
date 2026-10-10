@@ -260,7 +260,14 @@ def build_prompt_graph(
     width: int,
     height: int,
     filename_prefix: str,
+    reference_image: str | None = None,
 ) -> dict:
+    """Patch the Qwen-Image-2.1 graph.
+
+    Without a reference, node 9 is removed and the sampler uses the empty
+    latent. With a reference, LoadImage feeds TextEncodeQwenImage21 so the
+    next scene keeps the previous picture's characters and style.
+    """
     graph = copy.deepcopy(load_json(resolve_config_path(settings.image_workflow)))
     mapping = load_json(resolve_config_path(settings.image_workflow_map))
     values = {
@@ -277,13 +284,35 @@ def build_prompt_graph(
         "cfg": float(settings.image_cfg),
         "filename_prefix": filename_prefix,
     }
+    reference = (reference_image or "").strip()
+    if reference:
+        values["reference_image"] = reference
     for key, path in mapping.items():
         if key not in values or not isinstance(path, str):
             continue
         if key == "checkpoint" and not str(values[key] or "").strip():
             continue
         set_mapped_value(graph, path, values[key])
+    if reference:
+        if "9" not in graph:
+            raise ImageGenerationError("The image workflow has no reference image node")
+        return graph
+    _drop_reference(graph)
     return graph
+
+
+def _drop_reference(graph: dict) -> None:
+    """Text-only scenes must not load a blank reference or sample a square latent."""
+    graph.pop("9", None)
+    inputs = (graph.get("4") or {}).get("inputs")
+    if isinstance(inputs, dict):
+        inputs.pop("image_1", None)
+        inputs.pop("images.image_1", None)
+        inputs.pop("images", None)
+        inputs.pop("vae", None)
+    sampler = (graph.get("6") or {}).get("inputs")
+    if isinstance(sampler, dict) and sampler.get("latent_image") == ["4", 2]:
+        sampler["latent_image"] = ["5", 0]
 
 
 class ComfyUIImageProvider:
@@ -322,6 +351,25 @@ class ComfyUIImageProvider:
                 + "into those folders under the ComfyUI models directory."
             )
         self._nodes_checked = True
+
+    def upload_image(self, data: bytes, filename: str) -> str:
+        """Put a previous scene still into ComfyUI's input folder for LoadImage."""
+        name = Path(filename).name
+        if not name or name in {".", ".."}:
+            name = "reference.png"
+        payload = self._json(
+            "POST",
+            "/upload/image",
+            files={"image": (name, data, "application/octet-stream")},
+            data={"type": "input", "overwrite": "true"},
+        )
+        if not isinstance(payload, dict) or not payload.get("name"):
+            raise ImageGenerationError("ComfyUI upload did not return a filename")
+        subfolder = str(payload.get("subfolder") or "").replace("\\", "/").strip("/")
+        saved = str(payload["name"])
+        if subfolder:
+            return f"{subfolder}/{saved}"
+        return saved
 
     def generate(self, graph: dict, on_step=None) -> bytes:
         self.ensure_nodes()

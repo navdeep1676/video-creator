@@ -66,6 +66,13 @@ def report_progress(session: Session, job: StoryJob, progress: int, detail: str)
     session.commit()
 
 
+def _json_time(value: datetime | None) -> str | None:
+    """ISO text for routes that return JSONResponse, which cannot encode datetime."""
+    if value is None:
+        return None
+    return value.isoformat()
+
+
 def job_view(job: StoryJob) -> dict:
     progress = int(getattr(job, "progress", 0) or 0)
     return {
@@ -77,8 +84,8 @@ def job_view(job: StoryJob) -> dict:
         "error": job.error,
         "progress": progress,
         "detail": getattr(job, "detail", None),
-        "started_at": getattr(job, "started_at", None),
-        "created_at": getattr(job, "created_at", None),
+        "started_at": _json_time(getattr(job, "started_at", None)),
+        "created_at": _json_time(getattr(job, "created_at", None)),
     }
 
 

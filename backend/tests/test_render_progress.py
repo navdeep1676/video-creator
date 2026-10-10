@@ -62,5 +62,6 @@ def test_job_view_includes_progress_fields():
     )
     assert view["progress"] == 40
     assert view["detail"] == "Drawing scene 2"
-    assert view["started_at"] == moment
+    assert view["started_at"] == moment.isoformat()
+    assert view["created_at"] == moment.isoformat()
     assert view["stage"] == "images"

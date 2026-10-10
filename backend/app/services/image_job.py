@@ -31,6 +31,11 @@ from app.services.storage import get_storage
 
 logger = logging.getLogger(__name__)
 
+# Qwen sees this with the previous still, then the scene prompt.
+_REFERENCE_LINE = (
+    "Keep the same characters, faces, clothing, colors, and art style as the reference image. "
+)
+
 
 def execute_image_job(
     job_id: uuid.UUID,
@@ -123,14 +128,6 @@ def _draw_project(
     }
     if not slides:
         return ["Create slides from the story before generating images"]
-    ensure = getattr(provider, "ensure_nodes", None)
-    if callable(ensure):
-        try:
-            ensure()
-        except ProviderUnavailable:
-            raise
-        except ImageGenerationError as exc:
-            return [str(exc)]
     preset = project_aspect_ratio(project.settings)
     width, height = qwen_canvas(preset.width, preset.height, settings.image_max_side)
     errors: list[str] = []
@@ -150,7 +147,19 @@ def _draw_project(
     total = len(pending)
     if pending and on_start is not None:
         on_start()
+    if pending:
+        ensure = getattr(provider, "ensure_nodes", None)
+        if callable(ensure):
+            try:
+                ensure()
+            except ProviderUnavailable:
+                raise
+            except ImageGenerationError as exc:
+                return [str(exc)]
     published = {"percent": -1, "detail": ""}
+    storage = get_storage()
+    previous: bytes | None = None
+    pending_at = 0
 
     def publish(percent: int, detail: str) -> None:
         if on_progress is None:
@@ -162,32 +171,54 @@ def _draw_project(
         published["detail"] = detail
         on_progress(percent, detail)
 
-    for index, (slide, prompt) in enumerate(pending):
+    for slide in slides:
+        if pending_at >= len(pending) or pending[pending_at][0] is not slide:
+            kept = _read_slide_image(storage, slide)
+            if kept:
+                previous = kept
+            continue
+        index = pending_at
+        pending_at += 1
+        prompt = pending[index][1]
         drew = True
         base = int(100 * index / total) if total else 0
         cap = int(100 * (index + 1) / total) if total else 99
         order = slide.order_index + 1
-        publish(base, f"Drawing scene {order} · image {index + 1} of {total}")
+        reference_name = _upload_reference(provider, previous, slide.order_index)
+        using = " from the previous image" if reference_name else ""
+        publish(base, f"Drawing scene {order}{using} · image {index + 1} of {total}")
 
-        def on_step(value: int, maximum: int, base=base, cap=cap, order=order, index=index, total=total) -> None:
+        def on_step(
+            value: int,
+            maximum: int,
+            base=base,
+            cap=cap,
+            order=order,
+            index=index,
+            total=total,
+            using=using,
+        ) -> None:
             frac = 0.0 if maximum <= 0 else min(1.0, value / maximum)
             publish(
                 int(base + (cap - base) * frac),
-                f"Drawing scene {order} · step {value} of {maximum} · image {index + 1} of {total}",
+                f"Drawing scene {order}{using} · step {value} of {maximum} · image {index + 1} of {total}",
             )
 
         try:
+            scene_prompt = f"{_REFERENCE_LINE}{prompt}" if reference_name else prompt
             graph = build_prompt_graph(
                 settings,
-                prompt=prompt,
+                prompt=scene_prompt,
                 seed=_seed(slide.id, prompt),
                 width=width,
                 height=height,
                 filename_prefix=f"Naratto/{project.id}/{slide.order_index:03d}",
+                reference_image=reference_name,
             )
             raw = _call_generate(provider, graph, on_step)
             _store_slide_image(session, project, slide, raw, preset)
             session.commit()
+            previous = raw
             publish(cap, f"Saved scene {order} · {index + 1} of {total}")
         except ProviderUnavailable:
             raise
@@ -195,9 +226,29 @@ def _draw_project(
             session.rollback()
             errors.append(f"Slide {order}: {exc}")
             logger.exception("[IMAGE] slide %s failed", slide.id)
+            kept = _read_slide_image(storage, slide)
+            if kept:
+                previous = kept
     if errors or drew or skipped_existing:
         return errors
     return ["No scene has an image prompt"]
+
+
+def _read_slide_image(storage, slide: Slide) -> bytes | None:
+    keys = slide.all_image_keys()
+    if not keys or not storage.exists(keys[0]):
+        return None
+    return storage.get_bytes(keys[0])
+
+
+def _upload_reference(provider, previous: bytes | None, order_index: int) -> str | None:
+    if not previous:
+        return None
+    upload = getattr(provider, "upload_image", None)
+    if not callable(upload):
+        return None
+    suffix = "jpg" if previous.startswith(b"\xff\xd8") else "png"
+    return upload(previous, f"naratto-ref-{order_index:03d}.{suffix}")
 
 
 def _store_slide_image(session: Session, project: Project, slide: Slide, raw: bytes, preset) -> None:

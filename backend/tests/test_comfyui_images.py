@@ -106,7 +106,28 @@ def test_prompt_body_contains_patched_seed_and_text():
     assert body["5"]["inputs"]["height"] == 576
     assert body["4"]["inputs"]["resolution"] == 1024
     assert body["1"]["inputs"]["unet_name"] == settings.image_model
+    assert "image_1" not in body["4"]["inputs"]
+    assert "images.image_1" not in body["4"]["inputs"]
+    assert "9" not in body
+    assert body["6"]["inputs"]["latent_image"] == ["5", 0]
     assert image.startswith(b"\x89PNG")
+
+
+def test_reference_image_feeds_the_qwen_encoder():
+    graph = build_prompt_graph(
+        _settings(),
+        prompt="the same hallway, now the door opens",
+        seed=7,
+        width=1024,
+        height=576,
+        filename_prefix="Naratto/demo/001",
+        reference_image="naratto-ref-001.png",
+    )
+    assert graph["9"]["class_type"] == "LoadImage"
+    assert graph["9"]["inputs"]["image"] == "naratto-ref-001.png"
+    assert graph["4"]["inputs"]["images.image_1"] == ["9", 0]
+    assert graph["4"]["inputs"]["vae"] == ["3", 0]
+    assert graph["6"]["inputs"]["latent_image"] == ["4", 2]
 
 
 def test_download_uses_filename_subfolder_and_type():
@@ -251,3 +272,134 @@ def test_one_slide_failure_keeps_the_other_image(monkeypatch, tmp_path):
     assert failed.image_key is None
     assert len(errors) == 1
     assert errors[0].startswith("Slide 2:")
+
+
+def test_second_scene_uses_the_previous_image(monkeypatch, tmp_path):
+    storage = LocalStorage(tmp_path)
+    monkeypatch.setattr("app.services.image_job.get_storage", lambda: storage)
+    project_id = uuid.uuid4()
+    project = Project(
+        id=project_id,
+        owner_id=uuid.uuid4(),
+        title="hallway",
+        settings={"aspect_ratio": "16:9"},
+        storage_bytes=0,
+    )
+    first = Slide(id=uuid.uuid4(), project_id=project_id, order_index=0, duration_ms=5000, image_keys=[])
+    second = Slide(id=uuid.uuid4(), project_id=project_id, order_index=1, duration_ms=5000, image_keys=[])
+    scenes = [
+        StoryScene(project_id=project_id, index=0, image_prompt="a quiet hallway"),
+        StoryScene(project_id=project_id, index=1, image_prompt="the door opens"),
+    ]
+    graphs: list[dict] = []
+    uploads: list[tuple[str, bytes]] = []
+
+    class _Provider:
+        def upload_image(self, data: bytes, filename: str) -> str:
+            uploads.append((filename, data))
+            return filename
+
+        def generate(self, graph):
+            graphs.append(json.loads(json.dumps(graph)))
+            return _png()
+
+    errors = _draw_project(_Session([first, second], scenes), project, _settings(), _Provider(), False)
+    assert errors == []
+    assert len(uploads) == 1
+    assert uploads[0][0] == "naratto-ref-001.png"
+    assert uploads[0][1].startswith(b"\x89PNG")
+    assert "image_1" not in graphs[0]["4"]["inputs"]
+    assert "images.image_1" not in graphs[0]["4"]["inputs"]
+    assert graphs[1]["4"]["inputs"]["images.image_1"] == ["9", 0]
+    assert graphs[1]["9"]["inputs"]["image"] == "naratto-ref-001.png"
+    assert graphs[1]["4"]["inputs"]["prompt"].startswith("Keep the same characters")
+    assert "the door opens" in graphs[1]["4"]["inputs"]["prompt"]
+
+
+def test_existing_still_is_the_reference_for_the_next_scene(monkeypatch, tmp_path):
+    storage = LocalStorage(tmp_path)
+    monkeypatch.setattr("app.services.image_job.get_storage", lambda: storage)
+    project_id = uuid.uuid4()
+    project = Project(
+        id=project_id,
+        owner_id=uuid.uuid4(),
+        title="hallway",
+        settings={"aspect_ratio": "16:9"},
+        storage_bytes=0,
+    )
+    key = f"uploads/{project_id}/images/kept.png"
+    storage.put_bytes(key, _png())
+    kept = Slide(
+        id=uuid.uuid4(),
+        project_id=project_id,
+        order_index=0,
+        duration_ms=5000,
+        image_key=key,
+        image_keys=[{"key": key, "duration_ms": None}],
+    )
+    nxt = Slide(id=uuid.uuid4(), project_id=project_id, order_index=1, duration_ms=5000, image_keys=[])
+    scenes = [
+        StoryScene(project_id=project_id, index=0, image_prompt="a quiet hallway"),
+        StoryScene(project_id=project_id, index=1, image_prompt="the door opens"),
+    ]
+    graphs: list[dict] = []
+
+    class _Provider:
+        def upload_image(self, data: bytes, filename: str) -> str:
+            assert data == _png()
+            return "kept-ref.png"
+
+        def generate(self, graph):
+            graphs.append(graph)
+            return _png()
+
+    errors = _draw_project(_Session([kept, nxt], scenes), project, _settings(), _Provider(), False)
+    assert errors == []
+    assert len(graphs) == 1
+    assert graphs[0]["9"]["inputs"]["image"] == "kept-ref.png"
+    assert kept.image_key == key
+
+
+def test_upload_image_returns_the_input_name():
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/upload/image":
+            return httpx.Response(200, json={"name": "naratto-ref-001.png", "subfolder": "refs", "type": "input"})
+        return httpx.Response(404, json={})
+
+    provider = _provider(handler)
+    assert provider.upload_image(_png(), "naratto-ref-001.png") == "refs/naratto-ref-001.png"
+
+
+def test_comfyui_starts_before_the_node_check(monkeypatch, tmp_path):
+    storage = LocalStorage(tmp_path)
+    monkeypatch.setattr("app.services.image_job.get_storage", lambda: storage)
+    project_id = uuid.uuid4()
+    project = Project(
+        id=project_id,
+        owner_id=uuid.uuid4(),
+        title="hallway",
+        settings={"aspect_ratio": "16:9"},
+        storage_bytes=0,
+    )
+    slide = Slide(id=uuid.uuid4(), project_id=project_id, order_index=0, duration_ms=5000, image_keys=[])
+    scenes = [StoryScene(project_id=project_id, index=0, image_prompt="a quiet hallway")]
+    order: list[str] = []
+
+    class _Provider:
+        def ensure_nodes(self):
+            order.append("nodes")
+
+        def generate(self, graph):
+            order.append("draw")
+            return _png()
+
+    errors = _draw_project(
+        _Session([slide], scenes),
+        project,
+        _settings(),
+        _Provider(),
+        False,
+        on_start=lambda: order.append("start"),
+    )
+    assert errors == []
+    assert order == ["start", "nodes", "draw"]
