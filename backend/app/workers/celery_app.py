@@ -30,6 +30,9 @@ celery_app.conf.update(
     broker_transport_options={"visibility_timeout": settings.visibility_timeout_s},
     task_routes={
         "app.workers.tasks.generate_slide_tts": {"queue": "tts"},
+        "app.workers.tasks.generate_story": {"queue": "story-generation"},
+        "app.workers.tasks.generate_music": {"queue": "music-generation"},
+        "app.workers.tasks.generate_project_images": {"queue": "image-generation"},
         "app.workers.tasks.render_video": {"queue": "render"},
         "app.workers.tasks.reclaim_stuck_jobs": {"queue": "default"},
     },

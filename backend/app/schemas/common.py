@@ -118,7 +118,7 @@ class SlideOut(ORMModel):
     effective_duration_ms: int
     transition: str
     animation: str
-    # Prompt for Wan2.1 I2V or T2V 1.3B when animation is wan_i2v or wan_t2v
+    # Prompt for Wan2.2 TI2V 5B when animation is wan_i2v or wan_t2v
     motion_prompt: str | None = None
     narration: NarrationOut | None = None
 

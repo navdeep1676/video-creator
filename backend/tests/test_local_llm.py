@@ -4,7 +4,7 @@ import httpx
 import pytest
 
 from app.config import Settings
-from app.services.local_llm import LocalLLMProvider, is_local_model, local_catalog_rows
+from app.services.local_llm import LocalLLMProvider, configured_local_model, is_local_model, local_catalog_rows
 from app.services.openrouter_llm import ProviderUnavailable
 from app.services.story_job import build_llm_provider
 
@@ -78,6 +78,16 @@ def test_catalog_lists_server_models_and_a_configured_model_while_down():
     rows, up = local_catalog_rows(settings, client=httpx.Client(transport=httpx.MockTransport(down)))
     assert not up
     assert rows == [{"id": "local/qwen2.5:7b", "name": "qwen2.5:7b", "provider": "local", "supports_json": True}]
+
+
+def test_configured_local_model_is_the_story_default_id():
+    settings = _settings()
+    settings.local_llm_model = "qwen3:8b"
+    assert configured_local_model(settings) == "local/qwen3:8b"
+    settings.local_llm_model = ""
+    assert configured_local_model(settings) == ""
+    settings.local_llm_model = "local/../secret"
+    assert configured_local_model(settings) == ""
 
 
 def test_build_llm_provider_routes_local_ids():

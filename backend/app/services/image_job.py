@@ -21,27 +21,29 @@ from app.services.comfyui import (
 )
 from app.services.openrouter_llm import ProviderUnavailable
 from app.services.image_fit import fit_image_to_aspect
+from app.services.stage_job import begin_stage_job
 from app.services.storage import get_storage
 
 logger = logging.getLogger(__name__)
 
 
-def execute_image_job(job_id: uuid.UUID, provider: ComfyUIImageProvider | None = None) -> None:
+def execute_image_job(
+    job_id: uuid.UUID,
+    provider: ComfyUIImageProvider | None = None,
+    task_id: str | None = None,
+) -> None:
     settings = get_settings()
     session = SessionLocal()
     active = provider
     try:
-        job = session.get(StoryJob, job_id)
-        if job is None or job.status not in {"queued", "running"}:
+        job = begin_stage_job(session, job_id, task_id)
+        if job is None:
             return
         project = session.get(Project, job.project_id)
         if project is None:
             _fail(job, "Project not found")
             session.commit()
             return
-        job.status = "running"
-        job.attempts += 1
-        session.commit()
         force = bool((job.payload or {}).get("force"))
         active = provider or ComfyUIImageProvider(settings)
         errors = _draw_project(session, project, settings, active, force)

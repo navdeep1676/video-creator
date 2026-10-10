@@ -91,6 +91,7 @@ export default function StoryPanel({ projectId, defaultTopic }: { projectId: str
   const [schemaOpen, setSchemaOpen] = useState(false);
   const [formError, setFormError] = useState("");
   const [reviewOpen, setReviewOpen] = useState(false);
+  const modelTouched = useRef(false);
 
   const modelsQuery = useQuery({
     queryKey: ["story-models"],
@@ -129,12 +130,19 @@ export default function StoryPanel({ projectId, defaultTopic }: { projectId: str
     if (saved.visual_style) setVisualStyle(saved.visual_style);
     if (saved.music_mode) setMusicMode(saved.music_mode);
     if (saved.scene_count) setSceneCount(saved.scene_count);
-    if (saved.llm_model) setModel(saved.llm_model);
   }, [storyQuery.data?.settings]);
 
   useEffect(() => {
-    if (!model && modelsQuery.data?.default_model) setModel(modelsQuery.data.default_model);
-  }, [model, modelsQuery.data?.default_model]);
+    if (modelTouched.current) return;
+    const localDefault = (modelsQuery.data?.models ?? []).find((item) => item.provider === "local");
+    if (localDefault) {
+      setModel(localDefault.id);
+      return;
+    }
+    const savedModel = storyQuery.data?.settings?.llm_model;
+    if (savedModel) setModel(savedModel);
+    else if (modelsQuery.data?.default_model) setModel(modelsQuery.data.default_model);
+  }, [modelsQuery.data?.models, modelsQuery.data?.default_model, storyQuery.data?.settings?.llm_model]);
 
   const showSchema = async () => {
     if (schemaOpen) {
@@ -442,7 +450,10 @@ export default function StoryPanel({ projectId, defaultTopic }: { projectId: str
                 select
                 label="Model"
                 value={model}
-                onChange={(e) => setModel(e.target.value)}
+                onChange={(e) => {
+                  modelTouched.current = true;
+                  setModel(e.target.value);
+                }}
                 fullWidth
                 SelectProps={{
                   MenuProps: {
@@ -497,6 +508,11 @@ export default function StoryPanel({ projectId, defaultTopic }: { projectId: str
                     ? "Regenerate story"
                     : "Generate story"}
             </Button>
+            <Typography variant="caption" color="text.secondary">
+              Choose a Local model to write the story on this PC. Story planning, music, and scene images run on the
+              Celery worker. That worker must listen to story-generation, music-generation, and image-generation. Wan
+              stays on the render worker.
+            </Typography>
             {story && musicMode !== "none" && (
               <Stack spacing={1} alignItems="flex-start">
                 <Button variant="outlined" disabled={planning || musicBusy} onClick={() => generateMusic.mutate()}>
@@ -526,7 +542,7 @@ export default function StoryPanel({ projectId, defaultTopic }: { projectId: str
                 </Button>
                 <Typography variant="caption" color="text.secondary">
                   ComfyUI on port 8188 draws each scene with Qwen-Image-2.1. Slides that already have a picture are
-                  kept until you regenerate. Start the Celery worker before you press this.
+                  kept until you regenerate. The image-generation queue must be on the non-render Celery worker.
                 </Typography>
                 {imageJob?.status === "failed" && imageJob.error && <Alert severity="error">{imageJob.error}</Alert>}
               </Stack>

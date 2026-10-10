@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.config import get_settings
-from app.db.models import MusicAsset, Narration, Project, Slide, VideoJob
+from app.db.models import MusicAsset, Narration, Project, Slide, StoryJob, VideoJob
 from app.db.session import SessionLocal
 from app.services.aspect_ratios import DEFAULT_ASPECT_RATIO, canvas_for_quality, resolve_aspect_ratio
 from app.services.duration import effective_duration_ms
@@ -19,6 +19,7 @@ from app.services.export_readiness import slides_for_render
 from app.services.ffmpeg_pipeline import RenderOptions, SlideMedia, render_project_video
 from app.services.music_job import music_storage_key
 from app.services.story_slides import align_story_slide_durations
+from app.services.stage_job import is_abandoned_inline_job
 from app.services.storage import get_storage
 from app.services.subtitles import load_cues
 from app.services.tts_service import synthesize_to_mp3
@@ -223,15 +224,11 @@ def render_video(self, job_id: str) -> dict:
                 raise NonRetryableTaskError("VALIDATION", f"Slide {s.id} missing ready TTS audio")
             audio_path = storage.absolute_path(n.audio_key)
             anim = s.animation or "none"
-            # Wan2.1 image-to-video is the 14B checkpoint. This GPU uses the 1.3B text model.
-            if anim == "wan_i2v":
-                anim = "wan_t2v"
-            if anim == "wan_t2v" and not settings.wan_t2v_enabled:
+            # AI Motion and text-to-video both use Wan2.2 TI2V 5B.
+            if anim in {"wan_i2v", "wan_t2v"} and not settings.wan_t2v_enabled:
                 anim = "ken_burns"
             entries = s.all_image_entries()
-            if anim == "wan_i2v":
-                used_i2v = True
-            if anim == "wan_t2v":
+            if anim in {"wan_i2v", "wan_t2v"}:
                 used_t2v = True
             elif not entries:
                 raise NonRetryableTaskError("VALIDATION", f"Slide {s.id} has no images")
@@ -448,12 +445,30 @@ def _fail_job(db, job_id: str, code: str, message: str, details: dict | None = N
         db.rollback()
 
 
-@celery_app.task(name="app.workers.tasks.generate_project_images")
-def generate_project_images(job_id: str) -> dict:
-    """Draw Qwen-Image-2.1 stills. Runs on the default queue."""
+@celery_app.task(bind=True, name="app.workers.tasks.generate_story", acks_late=True)
+def generate_story(self, job_id: str) -> dict:
+    """Plan a story on the story-generation queue. The provider is rebuilt from the job row."""
+    from app.services.story_job import execute_story_job
+
+    execute_story_job(UUID(job_id), task_id=self.request.id)
+    return {"job_id": job_id}
+
+
+@celery_app.task(bind=True, name="app.workers.tasks.generate_music", acks_late=True)
+def generate_music(self, job_id: str) -> dict:
+    """Write the ACE-Step track on the music-generation queue."""
+    from app.services.music_job import execute_music_job
+
+    execute_music_job(UUID(job_id), task_id=self.request.id)
+    return {"job_id": job_id}
+
+
+@celery_app.task(bind=True, name="app.workers.tasks.generate_project_images", acks_late=True)
+def generate_project_images(self, job_id: str) -> dict:
+    """Draw Qwen-Image-2.1 stills on the image-generation queue."""
     from app.services.image_job import execute_image_job
 
-    execute_image_job(UUID(job_id))
+    execute_image_job(UUID(job_id), task_id=self.request.id)
     return {"job_id": job_id}
 
 
@@ -486,6 +501,27 @@ def reclaim_stuck_jobs() -> dict:
                 n.tts_error = "TTS stuck and reclaimed"
                 db.add(n)
                 count += 1
+        now = utcnow()
+        stage_jobs = db.scalars(
+            select(StoryJob).where(
+                StoryJob.stage.in_(("story", "music")),
+                StoryJob.status.in_(("queued", "running")),
+                StoryJob.celery_task_id.is_(None),
+            )
+        ).all()
+        for stage_job in stage_jobs:
+            if not is_abandoned_inline_job(
+                stage=stage_job.stage,
+                status=stage_job.status,
+                celery_task_id=stage_job.celery_task_id,
+                created_at=stage_job.created_at,
+                now=now,
+            ):
+                continue
+            stage_job.status = "failed"
+            stage_job.error = "Job stopped before it reached the worker. Generate it again."
+            db.add(stage_job)
+            count += 1
         db.commit()
         return {"reclaimed": count}
     finally:

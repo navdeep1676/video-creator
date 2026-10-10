@@ -4,7 +4,7 @@ from uuid import UUID
 
 from typing import Literal
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -28,10 +28,11 @@ from app.dependencies import get_current_user
 from app.services.media_tokens import signed_url_path
 from app.services.music_job import latest_job, music_storage_key
 from app.services.gemini_llm import gemini_catalog_rows
-from app.services.local_llm import local_catalog_rows
+from app.services.local_llm import configured_local_model, local_catalog_rows
 from app.services.openai_llm import openai_catalog_rows
 from app.services.openrouter_catalog import load_catalog
-from app.services.story_job import build_llm_provider, execute_story_job, latest_story_job, save_story
+from app.services.stage_job import dispatch_stage_task
+from app.services.story_job import latest_story_job, save_story
 from app.services.story_planner import PlanError, StoryPlan, import_plan
 from app.services.story_slides import replace_project_slides
 from app.schemas.common import ListResponse, ProjectCreate, ProjectOut, ProjectUpdate
@@ -524,8 +525,6 @@ def _save_direct_story(db: Session, project: Project, body: StoryRequest) -> dic
 def enqueue_story(
     project_id: UUID,
     body: StoryRequest,
-    request: Request,
-    background: BackgroundTasks,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
@@ -537,7 +536,7 @@ def enqueue_story(
     scene_count = _check_scene_count(body.scene_count.strip())
     settings = get_settings()
     catalog = load_catalog(settings)
-    model = body.llm_model or settings.openrouter_model
+    model = (body.llm_model or "").strip() or configured_local_model(settings) or settings.openrouter_model
     local_rows, _local_up = local_catalog_rows(settings)
     allowed = catalog.ids() | {row["id"] for row in gemini_catalog_rows(settings)} | {
         row["id"] for row in openai_catalog_rows(settings)
@@ -563,6 +562,7 @@ def enqueue_story(
     db.add(job)
     db.commit()
     db.refresh(job)
-    provider = build_llm_provider(settings, model, getattr(request.app.state, "llm_provider", None))
-    background.add_task(execute_story_job, job.id, provider)
+    from app.workers.tasks import generate_story
+
+    dispatch_stage_task(db, job, lambda: generate_story.delay(str(job.id)))
     return _job_out(job)

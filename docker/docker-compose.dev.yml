@@ -45,7 +45,7 @@ services:
         "watchfiles",
         "--filter",
         "python",
-        "celery -A app.workers.celery_app.celery_app worker -Q tts,default -c 2 -l info",
+        "celery -A app.workers.celery_app.celery_app worker -Q tts,default,story-generation,music-generation,image-generation -c 1 -l info",
         "/app/app",
       ]
     volumes:

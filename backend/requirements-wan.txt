@@ -8,14 +8,13 @@
 #   python -m pip install -r requirements-wan.txt
 #
 # Models (Diffusers):
-#   Wan-AI/Wan2.1-T2V-1.3B-Diffusers       (text-to-video, 480p, no ComfyUI)
-#   Wan-AI/Wan2.1-I2V-14B-480P-Diffusers  (image-to-video)
-#   Wan-AI/Wan2.1-I2V-14B-720P-Diffusers
+#   Wan-AI/Wan2.2-TI2V-5B-Diffusers       (text and image to video, 720p)
+#   Source checkpoint: https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B
 #
-# Official repo: https://github.com/Wan-Video/Wan2.1
+# Official repo: https://github.com/Wan-Video/Wan2.2
 # Note: flash_attn is optional/hard to build; Diffusers path works without it.
 
-diffusers>=0.32.0
+diffusers>=0.35.0
 transformers>=4.49.0
 accelerate>=1.1.1
 sentencepiece>=0.2.0

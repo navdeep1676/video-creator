@@ -92,10 +92,10 @@ class Settings(BaseSettings):
     # Replicate alternative: https://replicate.com/wavespeedai/wan-2.1-i2v-480p
     replicate_api_token: str = ""
     replicate_wan_model: str = "wavespeedai/wan-2.1-i2v-480p"
-    # Diffusers model ids (local CUDA only)
+    # Diffusers model ids. Local renders use Wan2.2 TI2V 5B, not this 14B id.
     wan_i2v_model_id: str = "Wan-AI/Wan2.1-I2V-14B-480P-Diffusers"
     wan_i2v_resolution: str = "480p"  # 480p | 720p
-    wan_i2v_num_frames: int = 81  # ~5s at 16 fps
+    wan_i2v_num_frames: int = 81  # 4n+1
     wan_i2v_guidance_scale: float = 5.0
     wan_i2v_num_inference_steps: int = 30
     wan_i2v_acceleration: str = "regular"  # fal: none | regular
@@ -119,18 +119,19 @@ class Settings(BaseSettings):
     wan_i2v_ckpt_dir: str = ""
     wan_i2v_python: str = "python"
 
-    # Wan2.1 Text-to-Video 1.3B. Local Diffusers or official generate.py. No ComfyUI.
-    # https://huggingface.co/Wan-AI/Wan2.1-T2V-1.3B-Diffusers
+    # Wan2.2 TI2V 5B. Same checkpoint does text-to-video and image-to-video.
+    # https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B
+    # The render worker loads the Diffusers packaging of that model.
     wan_t2v_enabled: bool = True
     # auto | diffusers | cli | mock
     wan_t2v_backend: str = "auto"
     wan_t2v_mock: bool = False
-    wan_t2v_model_id: str = "Wan-AI/Wan2.1-T2V-1.3B-Diffusers"
-    wan_t2v_width: int = 832
-    wan_t2v_height: int = 480
-    wan_t2v_num_frames: int = 81  # 4n+1, ~5s at 16 fps
-    wan_t2v_guidance_scale: float = 6.0  # official 1.3B recommendation
-    wan_t2v_flow_shift: float = 8.0
+    wan_t2v_model_id: str = "Wan-AI/Wan2.2-TI2V-5B-Diffusers"
+    wan_t2v_width: int = 1280
+    wan_t2v_height: int = 704
+    wan_t2v_num_frames: int = 81  # 4n+1. Official card uses 121; 81 is the 16 GB default.
+    wan_t2v_guidance_scale: float = 5.0
+    wan_t2v_flow_shift: float = 5.0
     wan_t2v_num_inference_steps: int = 50
     wan_t2v_seed: int = 42
     wan_t2v_device: str = "auto"  # auto | cuda | cpu (ROCm PyTorch uses cuda)

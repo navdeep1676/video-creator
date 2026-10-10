@@ -12,6 +12,7 @@ from app.config import Settings, get_settings
 from app.db.models import MusicAsset, Project, StoryJob
 from app.db.session import SessionLocal
 from app.services.ace_step import AceStepMusicProvider, generate_music_bytes, mark_music_failed
+from app.services.stage_job import begin_stage_job
 from app.services.storage import get_storage
 
 logger = logging.getLogger(__name__)
@@ -36,21 +37,22 @@ def latest_job(session: Session, project_id: uuid.UUID, stage: str) -> StoryJob 
     )
 
 
-def execute_music_job(job_id: uuid.UUID, provider: AceStepMusicProvider | None = None) -> None:
+def execute_music_job(
+    job_id: uuid.UUID,
+    provider: AceStepMusicProvider | None = None,
+    task_id: str | None = None,
+) -> None:
     settings = get_settings()
     session = SessionLocal()
     try:
-        job = session.get(StoryJob, job_id)
-        if job is None or job.status not in {"queued", "running"}:
+        job = begin_stage_job(session, job_id, task_id)
+        if job is None:
             return
         project = session.get(Project, job.project_id)
         if project is None:
             mark_music_failed(job, RuntimeError("Project not found"))
             session.commit()
             return
-        job.status = "running"
-        job.attempts += 1
-        session.commit()
         active = build_music_provider(settings, provider)
         audio = generate_music_bytes(active, dict(job.payload or {}), settings)
         if audio is None:

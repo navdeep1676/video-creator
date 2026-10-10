@@ -98,22 +98,8 @@ def build_export_readiness(
                     )
                 )
 
-    # Wan2.1 AI motion: warn when slides use wan_i2v without a real backend
+    # Wan2.2 TI2V 5B covers AI Motion (still + prompt) and text-to-video.
     wan_slides: list[ExportCheckIssue] = []
-    wan_real = False
-    wan_mock = False
-    wan_error: str | None = None
-    try:
-        from app.services.wan_i2v import resolve_backend, wan_i2v_status
-
-        status = wan_i2v_status()
-        wan_real = bool(status.get("real_ai"))
-        wan_mock = bool(status.get("mock"))
-        wan_error = status.get("error")
-        _ = resolve_backend  # noqa: F841 — imported for clarity
-    except Exception as e:
-        wan_error = str(e)
-
     t2v_slides: list[ExportCheckIssue] = []
     t2v_real = False
     t2v_mock = False
@@ -130,33 +116,22 @@ def build_export_readiness(
 
     for s in slides:
         anim = getattr(s, "animation", None) or "none"
-        if anim == "wan_t2v" and not t2v_real:
-            order = s.order_index + 1
-            t2v_slides.append(
-                ExportCheckIssue(
-                    slide_id=s.id,
-                    order=order,
-                    message=(
-                        f"Slide {order} uses Wan2.1 T2V 1.3B but it is not configured "
-                        f"({t2v_error or ('mock clip only' if t2v_mock else 'no backend')}). "
-                        "Install the local Diffusers weights or point WAN_T2V_CLI_SCRIPT at generate.py."
-                    ),
-                )
-            )
+        if anim not in {"wan_t2v", "wan_i2v"} or t2v_real:
+            continue
+        order = s.order_index + 1
+        issue = ExportCheckIssue(
+            slide_id=s.id,
+            order=order,
+            message=(
+                f"Slide {order} uses Wan2.2 TI2V 5B but it is not configured "
+                f"({t2v_error or ('mock clip only' if t2v_mock else 'no backend')}). "
+                "Install Wan-AI/Wan2.2-TI2V-5B-Diffusers or point WAN_T2V_CLI_SCRIPT at Wan2.2 generate.py."
+            ),
+        )
         if anim == "wan_i2v":
-            order = s.order_index + 1
-            if not wan_real:
-                wan_slides.append(
-                    ExportCheckIssue(
-                        slide_id=s.id,
-                        order=order,
-                        message=(
-                            f"Slide {order} uses AI Motion but Wan2.1 is not configured "
-                            f"({wan_error or ('mock zoom only' if wan_mock else 'no backend')}). "
-                            "Set FAL_KEY in .env for real video, or switch animation to Ken Burns."
-                        ),
-                    )
-                )
+            wan_slides.append(issue)
+        else:
+            t2v_slides.append(issue)
 
     has_slides_ok = len(slides) > 0
     subject = "This slide" if single_slide else "Every slide"
@@ -210,12 +185,12 @@ def build_export_readiness(
         ExportCheckItem(
             id="wan_i2v",
             ok=len(wan_slides) == 0,
-            label="Wan2.1 AI Motion configured (FAL_KEY / GPU)"
+            label="Wan2.2 TI2V 5B image motion configured"
             if wan_slides
             else (
-                "Wan2.1 AI Motion ready"
-                if wan_real
-                else "Wan2.1 AI Motion (optional)"
+                "Wan2.2 TI2V 5B image motion ready"
+                if t2v_real
+                else "Wan2.2 TI2V 5B image motion (optional)"
             ),
             # Block export when user asked for AI motion but only mock/unconfigured
             severity="error" if wan_slides else "info",
@@ -225,12 +200,12 @@ def build_export_readiness(
         ExportCheckItem(
             id="wan_t2v",
             ok=len(t2v_slides) == 0,
-            label="Wan2.1 T2V 1.3B configured (local, no ComfyUI)"
+            label="Wan2.2 TI2V 5B text motion configured"
             if t2v_slides
             else (
-                "Wan2.1 T2V 1.3B ready"
+                "Wan2.2 TI2V 5B text motion ready"
                 if t2v_real
-                else "Wan2.1 T2V 1.3B (optional)"
+                else "Wan2.2 TI2V 5B text motion (optional)"
             ),
             severity="error" if t2v_slides else "info",
             count=len(t2v_slides),

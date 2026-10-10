@@ -1,13 +1,17 @@
 """
-Wan2.1 Text-to-Video 1.3B. Runs locally, with no ComfyUI process.
+Wan2.2 TI2V 5B. Runs locally, with no ComfyUI process.
+
+The weights are https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B. One checkpoint
+does text-to-video and image-to-video. The render worker loads the Diffusers
+packaging, Wan-AI/Wan2.2-TI2V-5B-Diffusers.
 
 Backends (resolve_backend()):
-  - diffusers: Hugging Face WanPipeline, model Wan-AI/Wan2.1-T2V-1.3B-Diffusers
-  - cli:       official Wan2.1 generate.py --task t2v-1.3B
+  - diffusers: WanPipeline, or WanImageToVideoPipeline when a still is passed
+  - cli:       official Wan2.2 generate.py --task ti2v-5B
   - mock:      FFmpeg color clip ONLY when WAN_T2V_MOCK=true (not real AI video)
 
-The 1.3B model is 480p (832×480 or 480×832). A ROCm PyTorch build reports the
-GPU through torch.cuda, so this module never shells out to nvidia-smi.
+Native size is 1280×704 or 704×1280 at 24 fps. A ROCm PyTorch build reports
+the GPU through torch.cuda, so this module never shells out to nvidia-smi.
 """
 
 from __future__ import annotations
@@ -38,11 +42,16 @@ DEFAULT_NEGATIVE_PROMPT = (
     "in the background, walking backwards"
 )
 
-TASK = "t2v-1.3B"
+TASK = "ti2v-5B"
+CLIP_FPS = 24
+# Wan2.2 VAE stride is 16 and the patch size is 2, so spatial sizes use 32.
+TI2V_MOD = 32
+TI2V_MAX_AREA = 1280 * 704
 
 _pipe_lock = threading.Lock()
 _pipe = None
 _pipe_model_id: str | None = None
+_pipe_kind: str | None = None
 
 
 @dataclass
@@ -54,20 +63,33 @@ class WanT2VResult:
 
 
 def _frame_count(value: int) -> int:
-    """Wan samples 4n+1 frames. The 1.3B checkpoint is trained around 81."""
-    n = max(17, min(int(value), 81))
+    """Wan samples 4n+1 frames. TI2V-5B is trained up to 121."""
+    n = max(17, min(int(value), 121))
     return n - ((n - 1) % 4)
 
 
 def choose_size(settings: Settings, frame_width: int | None = None, frame_height: int | None = None) -> tuple[int, int]:
-    """1.3B supports 832×480 and 480×832. Portrait delivery uses the tall size."""
+    """TI2V-5B uses 1280×704 or 704×1280. Portrait delivery uses the tall size."""
     if frame_width and frame_height and int(frame_height) > int(frame_width):
-        return 480, 832
+        return 704, 1280
     width = int(settings.wan_t2v_width)
     height = int(settings.wan_t2v_height)
     if height > width:
-        return 480, 832
-    return 832, 480
+        return 704, 1280
+    return 1280, 704
+
+
+def image_size(image_path: Path) -> tuple[int, int]:
+    """Match the still's aspect at the 720p area the 5B model expects."""
+    from PIL import Image
+
+    with Image.open(image_path) as image:
+        width, height = image.size
+    aspect = height / max(width, 1)
+    mod = TI2V_MOD
+    out_h = max(mod, round((TI2V_MAX_AREA * aspect) ** 0.5) // mod * mod)
+    out_w = max(mod, round((TI2V_MAX_AREA / aspect) ** 0.5) // mod * mod)
+    return out_w, out_h
 
 
 def _gpu_available() -> bool:
@@ -112,9 +134,9 @@ def resolve_backend() -> str:
     if _cli_ready(settings):
         return "cli"
     raise RuntimeError(
-        "Wan2.1 T2V-1.3B runs on this machine, without ComfyUI. "
-        "Install PyTorch (ROCm on the RX 9060 XT) and pip install -r requirements-wan.txt, "
-        "or set WAN_T2V_CKPT_DIR to Wan2.1-T2V-1.3B and WAN_T2V_CLI_SCRIPT to generate.py. "
+        "Wan2.2 TI2V-5B runs on this machine, without ComfyUI. "
+        "Install PyTorch (ROCm on this GPU) and pip install -r requirements-wan.txt, "
+        "or set WAN_T2V_CKPT_DIR to Wan2.2-TI2V-5B and WAN_T2V_CLI_SCRIPT to generate.py. "
         "WAN_T2V_MOCK=true is an FFmpeg stand-in, not real video."
     )
 
@@ -154,7 +176,7 @@ def wan_t2v_status() -> dict:
     elif backend == "cli":
         ready = cli_ok
         if not ready and error is None:
-            error = "WAN_T2V_CKPT_DIR and WAN_T2V_CLI_SCRIPT must point at the official Wan2.1 checkout."
+            error = "WAN_T2V_CKPT_DIR and WAN_T2V_CLI_SCRIPT must point at the official Wan2.2 checkout."
     else:
         ready = backend == "mock"
 
@@ -185,15 +207,23 @@ def wan_t2v_status() -> dict:
             None
             if real and ready
             else (
-                "T2V-1.3B is local. Use Diffusers (WAN_T2V_BACKEND=diffusers) or the official "
-                "generate.py --task t2v-1.3B. ComfyUI is not required."
+                "Wan2.2 TI2V-5B is local. Use Diffusers (WAN_T2V_BACKEND=diffusers) or the official "
+                "generate.py --task ti2v-5B. ComfyUI is not required."
             )
         ),
     }
 
 
-def build_cli_command(settings: Settings, prompt: str, output_path: Path, *, width: int, height: int) -> list[str]:
-    """Argument list for Wan2.1 generate.py. Does not start the process."""
+def build_cli_command(
+    settings: Settings,
+    prompt: str,
+    output_path: Path,
+    *,
+    width: int,
+    height: int,
+    image_path: Path | None = None,
+) -> list[str]:
+    """Argument list for Wan2.2 generate.py --task ti2v-5B. Does not start the process."""
     ckpt = (settings.wan_t2v_ckpt_dir or "").strip()
     script = _cli_script(settings)
     size = f"{width}*{height}"
@@ -219,8 +249,10 @@ def build_cli_command(settings: Settings, prompt: str, output_path: Path, *, wid
         "--save_file",
         str(output_path),
     ]
+    if image_path is not None:
+        cmd.extend(["--image", str(Path(image_path).resolve())])
     if settings.wan_t2v_offload:
-        cmd.extend(["--offload_model", "True", "--t5_cpu"])
+        cmd.extend(["--offload_model", "True", "--convert_model_dtype", "--t5_cpu"])
     if settings.wan_t2v_seed >= 0:
         cmd.extend(["--base_seed", str(int(settings.wan_t2v_seed))])
     return cmd
@@ -236,11 +268,15 @@ def cache_key_for(
     guidance_scale: float,
     seed: int,
     steps: int,
+    model_id: str,
+    image_path: Path | None = None,
 ) -> str:
     h = hashlib.sha256()
+    if image_path is not None:
+        h.update(Path(image_path).read_bytes())
     h.update(prompt.encode("utf-8"))
     h.update(
-        f"{backend}|{width}x{height}|{num_frames}|{guidance_scale}|{seed}|{steps}|{TASK}".encode()
+        f"{backend}|{model_id}|{width}x{height}|{num_frames}|{guidance_scale}|{seed}|{steps}|{TASK}".encode()
     )
     return h.hexdigest()[:32]
 
@@ -319,17 +355,18 @@ def preload_t2v(progress_cb: ProgressCb | None = None) -> None:
         logger.info("wan_t2v[%s]: %s", backend, msg)
 
     _write_worker_state("loading")
-    _load_diffusers_pipe(settings, progress)
+    _load_diffusers_pipe(settings, progress, with_image=True)
     progress("pipeline resident")
 
 
 def unload_t2v() -> None:
     """Drop the cached pipeline so the next GPU stage can load."""
-    global _pipe, _pipe_model_id
+    global _pipe, _pipe_model_id, _pipe_kind
     _clear_worker_state()
     with _pipe_lock:
         _pipe = None
         _pipe_model_id = None
+        _pipe_kind = None
     try:
         import gc
 
@@ -351,9 +388,10 @@ def generate_t2v(
     cache_dir: Path | str | None = None,
     frame_width: int | None = None,
     frame_height: int | None = None,
+    image_path: Path | str | None = None,
     progress_cb: ProgressCb | None = None,
 ) -> WanT2VResult:
-    """Generate a 480p clip from a text prompt. No input image and no ComfyUI."""
+    """Generate a Wan2.2 TI2V-5B clip. A still image makes this image-to-video."""
     settings = get_settings()
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -364,7 +402,13 @@ def generate_t2v(
         or DEFAULT_NEGATIVE_PROMPT
     )
     backend = resolve_backend()
-    width, height = choose_size(settings, frame_width, frame_height)
+    still: Path | None = Path(image_path) if image_path else None
+    if still is not None and not still.is_file():
+        raise RuntimeError(f"Wan TI2V still image is missing: {still}")
+    if still is not None:
+        width, height = image_size(still)
+    else:
+        width, height = choose_size(settings, frame_width, frame_height)
 
     def progress(msg: str) -> None:
         if progress_cb:
@@ -380,6 +424,8 @@ def generate_t2v(
         guidance_scale=float(settings.wan_t2v_guidance_scale),
         seed=int(settings.wan_t2v_seed),
         steps=int(settings.wan_t2v_num_inference_steps),
+        model_id=settings.wan_t2v_model_id,
+        image_path=still,
     )
 
     raw_out = output_path
@@ -400,12 +446,12 @@ def generate_t2v(
 
     progress(f"generating with backend={backend}")
     if backend == "mock":
-        progress("WARNING: mock mode — solid-color clip, not real Wan2.1 T2V")
+        progress("WARNING: mock mode — solid-color clip, not real Wan2.2 TI2V")
         _generate_mock(raw_out, settings, width, height)
     elif backend == "diffusers":
-        _generate_diffusers(raw_out, prompt, neg, settings, width, height, progress)
+        _generate_diffusers(raw_out, prompt, neg, settings, width, height, still, progress)
     elif backend == "cli":
-        _generate_cli(raw_out, prompt, settings, width, height, progress)
+        _generate_cli(raw_out, prompt, settings, width, height, still, progress)
     else:
         raise ValueError(f"Unknown wan_t2v backend: {backend}")
 
@@ -454,37 +500,40 @@ def _inference_device(settings: Settings) -> str:
     return "cuda" if _gpu_available() else "cpu"
 
 
-def _load_diffusers_pipe(settings: Settings, progress: ProgressCb):
+def _load_diffusers_pipe(settings: Settings, progress: ProgressCb, *, with_image: bool):
     """Return the process-wide Wan pipeline, loading it on first use."""
-    global _pipe, _pipe_model_id
+    global _pipe, _pipe_model_id, _pipe_kind
 
     try:
         import torch
-        from diffusers import AutoencoderKLWan, WanPipeline
+        from diffusers import AutoencoderKLWan, WanImageToVideoPipeline, WanPipeline
     except ImportError as exc:
         raise RuntimeError(
-            "Wan T2V diffusers backend requires torch, diffusers, and transformers. "
+            "Wan TI2V diffusers backend requires torch, diffusers, and transformers. "
             "Install: pip install -r requirements-wan.txt"
         ) from exc
 
     model_id = settings.wan_t2v_model_id
+    kind = "image" if with_image else "text"
     device = _inference_device(settings)
     if device == "cpu":
-        logger.warning("Wan T2V-1.3B on CPU is extremely slow")
+        logger.warning("Wan2.2 TI2V-5B on CPU is extremely slow")
 
     dtype = torch.bfloat16 if device == "cuda" else torch.float32
+    pipeline_cls = WanImageToVideoPipeline if with_image else WanPipeline
     with _pipe_lock:
-        if _pipe is None or _pipe_model_id != model_id:
+        if _pipe is None or _pipe_model_id != model_id or _pipe_kind != kind:
             _write_worker_state("loading")
             progress(f"loading model {model_id}")
             vae = AutoencoderKLWan.from_pretrained(model_id, subfolder="vae", torch_dtype=torch.float32)
-            pipe = WanPipeline.from_pretrained(model_id, vae=vae, torch_dtype=dtype)
+            pipe = pipeline_cls.from_pretrained(model_id, vae=vae, torch_dtype=dtype)
             if settings.wan_t2v_offload and device == "cuda":
                 pipe.enable_model_cpu_offload()
             else:
                 pipe.to(device)
             _pipe = pipe
             _pipe_model_id = model_id
+            _pipe_kind = kind
         _write_worker_state("loaded")
         return _pipe
 
@@ -496,26 +545,31 @@ def _generate_diffusers(
     settings: Settings,
     width: int,
     height: int,
+    image_path: Path | None,
     progress: ProgressCb,
 ) -> None:
     import torch
-    from diffusers.utils import export_to_video
+    from diffusers.utils import export_to_video, load_image
 
-    pipe = _load_diffusers_pipe(settings, progress)
+    pipe = _load_diffusers_pipe(settings, progress, with_image=image_path is not None)
     frames = _frame_count(settings.wan_t2v_num_frames)
     shift = float(settings.wan_t2v_flow_shift)
     try:
         pipe.scheduler = pipe.scheduler.__class__.from_config(pipe.scheduler.config, flow_shift=shift)
     except Exception:
-        logger.info("Wan T2V scheduler kept its default flow shift")
+        logger.info("Wan TI2V scheduler kept its default flow shift")
 
     generator = None
     if settings.wan_t2v_seed >= 0:
         # CPU generator stays valid when the pipeline offloads weights between steps.
         generator = torch.Generator(device="cpu").manual_seed(int(settings.wan_t2v_seed))
 
+    image = None
+    if image_path is not None:
+        image = load_image(str(image_path)).resize((width, height))
+
     progress(f"sampling {frames} frames @ {width}x{height}")
-    result = pipe(
+    call = dict(
         prompt=prompt,
         negative_prompt=negative_prompt,
         height=height,
@@ -525,8 +579,11 @@ def _generate_diffusers(
         guidance_scale=float(settings.wan_t2v_guidance_scale),
         generator=generator,
     )
+    if image is not None:
+        call["image"] = image
+    result = pipe(**call)
     progress("exporting video")
-    export_to_video(result.frames[0], str(output_path), fps=16)
+    export_to_video(result.frames[0], str(output_path), fps=CLIP_FPS)
 
 
 def _generate_cli(
@@ -535,17 +592,25 @@ def _generate_cli(
     settings: Settings,
     width: int,
     height: int,
+    image_path: Path | None,
     progress: ProgressCb,
 ) -> None:
     ckpt = (settings.wan_t2v_ckpt_dir or "").strip()
     script = _cli_script(settings)
     if not ckpt or not Path(ckpt).is_dir():
-        raise RuntimeError("WAN_T2V_CKPT_DIR must point to downloaded Wan2.1-T2V-1.3B weights")
+        raise RuntimeError("WAN_T2V_CKPT_DIR must point to downloaded Wan2.2-TI2V-5B weights")
     if not script or not Path(script).is_file():
-        raise RuntimeError("WAN_T2V_CLI_SCRIPT must point to Wan2.1 generate.py")
+        raise RuntimeError("WAN_T2V_CLI_SCRIPT must point to Wan2.2 generate.py")
 
-    cmd = build_cli_command(settings, prompt, output_path.resolve(), width=width, height=height)
-    progress("running official Wan2.1 generate.py --task t2v-1.3B")
+    cmd = build_cli_command(
+        settings,
+        prompt,
+        output_path.resolve(),
+        width=width,
+        height=height,
+        image_path=image_path,
+    )
+    progress("running official Wan2.2 generate.py --task ti2v-5B")
     result = subprocess.run(
         cmd,
         capture_output=True,
@@ -557,4 +622,4 @@ def _generate_cli(
     )
     if result.returncode != 0 or not output_path.is_file():
         err = (result.stderr or result.stdout or "")[-3000:]
-        raise RuntimeError(f"Wan2.1 T2V CLI failed ({result.returncode}): {err}")
+        raise RuntimeError(f"Wan2.2 TI2V CLI failed ({result.returncode}): {err}")

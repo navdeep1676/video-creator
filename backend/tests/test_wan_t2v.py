@@ -1,4 +1,4 @@
-"""Wan2.1 T2V-1.3B — local Diffusers/CLI selection and mock clips. No GPU."""
+"""Wan2.2 TI2V-5B — local Diffusers/CLI selection and mock clips. No GPU."""
 
 from __future__ import annotations
 
@@ -34,8 +34,8 @@ def test_status_reports_mock(monkeypatch):
     assert status["mock"] is True
     assert status["ready"] is True
     assert status["comfyui"] is False
-    assert status["task"] == "t2v-1.3B"
-    assert status["model_id"] == "Wan-AI/Wan2.1-T2V-1.3B-Diffusers"
+    assert status["task"] == "ti2v-5B"
+    assert status["model_id"] == "Wan-AI/Wan2.2-TI2V-5B-Diffusers"
     get_settings.cache_clear()
 
 
@@ -65,7 +65,7 @@ def test_resolve_backend_diffusers_is_explicit(monkeypatch):
 
 
 def test_resolve_backend_cli_when_weights_exist(monkeypatch, tmp_path: Path):
-    ckpt = tmp_path / "Wan2.1-T2V-1.3B"
+    ckpt = tmp_path / "Wan2.2-TI2V-5B"
     ckpt.mkdir()
     script = tmp_path / "generate.py"
     script.write_text("# official entry\n", encoding="utf-8")
@@ -81,25 +81,36 @@ def test_resolve_backend_cli_when_weights_exist(monkeypatch, tmp_path: Path):
     get_settings.cache_clear()
 
 
-def test_cli_command_is_t2v_1_3b(monkeypatch, tmp_path: Path):
+def test_cli_command_is_ti2v_5b(monkeypatch, tmp_path: Path):
     get_settings = _clear_settings(
         monkeypatch,
         WAN_T2V_CKPT_DIR=str(tmp_path),
         WAN_T2V_CLI_SCRIPT=str(tmp_path / "generate.py"),
-        WAN_T2V_GUIDANCE_SCALE="6",
-        WAN_T2V_FLOW_SHIFT="8",
+        WAN_T2V_GUIDANCE_SCALE="5",
+        WAN_T2V_FLOW_SHIFT="5",
         WAN_T2V_NUM_FRAMES="81",
         WAN_T2V_OFFLOAD="true",
         WAN_T2V_SEED="7",
     )
     settings = get_settings()
-    cmd = build_cli_command(settings, "a fox in snow", tmp_path / "out.mp4", width=832, height=480)
+    still = tmp_path / "still.jpg"
+    still.write_bytes(b"jpeg")
+    cmd = build_cli_command(
+        settings,
+        "a fox in snow",
+        tmp_path / "out.mp4",
+        width=1280,
+        height=704,
+        image_path=still,
+    )
     assert "--task" in cmd
-    assert cmd[cmd.index("--task") + 1] == "t2v-1.3B"
-    assert cmd[cmd.index("--size") + 1] == "832*480"
-    assert cmd[cmd.index("--sample_shift") + 1] == "8.0"
-    assert cmd[cmd.index("--sample_guide_scale") + 1] == "6.0"
+    assert cmd[cmd.index("--task") + 1] == "ti2v-5B"
+    assert cmd[cmd.index("--size") + 1] == "1280*704"
+    assert cmd[cmd.index("--sample_shift") + 1] == "5.0"
+    assert cmd[cmd.index("--sample_guide_scale") + 1] == "5.0"
     assert cmd[cmd.index("--frame_num") + 1] == "81"
+    assert cmd[cmd.index("--image") + 1] == str(still.resolve())
+    assert "--convert_model_dtype" in cmd
     assert "--t5_cpu" in cmd
     assert "comfy" not in " ".join(cmd).lower()
     get_settings.cache_clear()
@@ -108,8 +119,8 @@ def test_cli_command_is_t2v_1_3b(monkeypatch, tmp_path: Path):
 def test_portrait_frame_uses_tall_size(monkeypatch):
     get_settings = _clear_settings(monkeypatch)
     settings = get_settings()
-    assert choose_size(settings, 1920, 1080) == (832, 480)
-    assert choose_size(settings, 1080, 1920) == (480, 832)
+    assert choose_size(settings, 1920, 1080) == (1280, 704)
+    assert choose_size(settings, 1080, 1920) == (704, 1280)
     get_settings.cache_clear()
 
 

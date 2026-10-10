@@ -29,6 +29,14 @@ def local_model_name(model_id: str) -> str:
     return text
 
 
+def configured_local_model(settings: Settings) -> str:
+    """Story-model id from LOCAL_LLM_MODEL, or empty when it is unset."""
+    stored = _stored_id(settings.local_llm_model) if settings.local_llm_model.strip() else ""
+    if stored and is_local_model(stored):
+        return stored
+    return ""
+
+
 def _stored_id(model_id: str) -> str:
     text = model_id.strip()
     if text.startswith(_PREFIX):

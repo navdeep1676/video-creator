@@ -9,7 +9,7 @@
 - Email/password auth (JWT access + httpOnly refresh cookie)
 - Projects & multi-image slide upload
 - Per-slide narration, voice, speed, transition, Ken Burns animation
-- **Wan2.1 Image-to-Video** slide animation (AI motion from stills; mock offline, GPU Diffusers/CLI for real inference)
+- **Wan2.2 TI2V 5B** slide animation (AI motion from stills, or text-to-video; local Diffusers, no ComfyUI)
 - Async Deepgram TTS (mock mode without API key)
 - Background FFmpeg render (fade + concat timeline, subtitles, optional BGM)
 - Download MP4 + signed media URLs for preview
@@ -111,66 +111,53 @@ Download the official INT8 weights from [Comfy-Org/Qwen-Image-2.1](https://huggi
 
 The diffusion model is about 6.8 GB and the text encoder is about 8.7 GB. Together they are larger than 16 GB of VRAM, so leave ComfyUI’s dynamic VRAM loader on. Do not pass `--highvram`, `--gpu-only`, or `--disable-dynamic-vram`. The 64 GB of system RAM holds the weights that do not fit.
 
-Start ComfyUI on `127.0.0.1:8188` when it runs on the same machine as Naratto. If ComfyUI is on the AMD PC and Naratto stays on another computer, start ComfyUI on `0.0.0.0:8188` and set `COMFYUI_BASE_URL` to that PC’s LAN address. Then start the Naratto API and one Celery worker that listens to `tts,default,render`. Restart the worker after this code is in place. The image task uses the `default` queue. In the app, generate a story, then **Generate scene images**. Each scene prompt becomes one slide picture. A failed scene is recorded and the other scenes still save. **Regenerate scene images** draws them again. When the batch finishes, Naratto calls `POST /free` so music or Wan can use the GPU.
+Start ComfyUI on `127.0.0.1:8188` when it runs on the same machine as Naratto. If ComfyUI is on the AMD PC and Naratto stays on another computer, start ComfyUI on `0.0.0.0:8188` and set `COMFYUI_BASE_URL` to that PC’s LAN address. Then start the Naratto API and the Celery workers. Scene images use the `image-generation` queue, so the non-render worker must include it. Restart that worker after this code is in place. In the app, generate a story, then **Generate scene images**. Each scene prompt becomes one slide picture. A failed scene is recorded and the other scenes still save. **Regenerate scene images** draws them again. When the batch finishes, Naratto calls `POST /free` so music or Wan can use the GPU.
 
 `IMAGE_MAX_SIDE` defaults to 1024. A 16:9 project is drawn at 1024×576, then fitted to the project frame. To use a GGUF diffusion file instead, replace both `IMAGE_WORKFLOW` and `IMAGE_WORKFLOW_MAP` with a graph you exported from that ComfyUI in API format. The shipped graph stays on the native `UNETLoader`.
 
-### Wan2.1 Image-to-Video (AI Motion)
+### Wan2.2 TI2V 5B
 
-[Wan2.1](https://github.com/Wan-Video/Wan2.1) animates slide stills into short motion clips during export when a slide’s **Animation** is set to **AI Motion (Wan2.1 I2V)**.
+[Wan2.2-TI2V-5B](https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B) is the local video model. It does not go through ComfyUI. On a slide, **AI Motion** animates the still. **Text to video** uses the same checkpoint with no still. The prompt is the motion prompt, or the narration when that box is empty.
 
-> **Important:** Without a cloud key or GPU, you only get a FFmpeg zoom (mock). That is **not** real Wan video.
-
-| Mode | When | Requirements |
-|------|------|----------------|
-| **fal.ai** (recommended) | `FAL_KEY` set, `WAN_I2V_BACKEND=auto` | Key from [fal.ai/wan-i2v](https://fal.ai/models/fal-ai/wan-i2v) |
-| **Replicate** | `REPLICATE_API_TOKEN` set | [wavespeedai/wan-2.1-i2v-480p](https://replicate.com/wavespeedai/wan-2.1-i2v-480p) |
-| **Diffusers** | CUDA + `WAN_I2V_BACKEND=diffusers` | `pip install -r backend/requirements-wan.txt` |
-| **Mock zoom** | `WAN_I2V_MOCK=true` | Offline stand-in only — looks like Ken Burns |
-
-```bash
-# Real Wan2.1 via fal.ai (works on Mac / Docker without a local GPU)
-# 1. Create a key: https://fal.ai/dashboard/keys
-# 2. Put it in repo-root .env:
-FAL_KEY=your_fal_key_here
-WAN_I2V_MOCK=false
-WAN_I2V_BACKEND=auto
-WAN_I2V_RESOLUTION=480p
-
-# 3. Restart stack
-./scripts/dev-docker.sh -d
-```
-
-Real generation takes **1–4+ minutes per image**. Clips are cached under `uploads/{project_id}/i2v_cache/`.
-
-Status: `GET /health` → `wan_i2v`, or `GET /api/v1/video/wan-i2v/status`.
-
-### Wan2.1 Text-to-Video 1.3B
-
-[Wan2.1-T2V-1.3B](https://huggingface.co/Wan-AI/Wan2.1-T2V-1.3B-Diffusers) writes a short clip from a text prompt. It does not go through ComfyUI. On a slide, set **Animation** to **Text to video (Wan2.1 T2V 1.3B)**. A still image is optional. The prompt is the video prompt, or the narration when that box is empty.
-
-The 1.3B model is the 480p checkpoint (832×480, or 480×832 for a portrait frame). It fits a 16 GB GPU when offload is on. Do not run it while ComfyUI or ACE-Step is using the GPU.
+The render worker loads the Diffusers packaging, [Wan2.2-TI2V-5B-Diffusers](https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B-Diffusers). Native size is 1280×704, or 704×1280 for a portrait frame, at 24 fps. Offload is on. Do not run it while ComfyUI or ACE-Step is using the GPU. The official 121-frame setting wants about 24 GB. This machine defaults to 81 frames so a 16 GB GPU can load it.
 
 | Mode | When | Requirements |
 |------|------|----------------|
-| **Diffusers** | GPU PyTorch installed, `WAN_T2V_BACKEND=auto` | `pip install -r backend/requirements-wan.txt`. First run downloads `Wan-AI/Wan2.1-T2V-1.3B-Diffusers`. |
-| **Official CLI** | `WAN_T2V_BACKEND=cli` | `generate.py --task t2v-1.3B` and the `Wan2.1-T2V-1.3B` checkpoint directory |
+| **Diffusers** | GPU PyTorch installed, `WAN_T2V_BACKEND=auto` | `pip install -r backend/requirements-wan.txt`. First export downloads `Wan-AI/Wan2.2-TI2V-5B-Diffusers`. |
+| **Official CLI** | `WAN_T2V_BACKEND=cli` | `generate.py --task ti2v-5B` and the `Wan2.2-TI2V-5B` checkpoint directory |
 | **Mock** | `WAN_T2V_MOCK=true` | Solid-color stand-in, not real video |
 
-On the RX 9060 XT, install the ROCm build of PyTorch. That build exposes the GPU as `torch.cuda`. The app does not call `nvidia-smi`.
+On the RX 9070 XT, install the ROCm build of PyTorch. That build exposes the GPU as `torch.cuda`. The app does not call `nvidia-smi`.
 
 ```bash
 # Repo-root .env
 WAN_T2V_MOCK=false
 WAN_T2V_BACKEND=auto
 WAN_T2V_OFFLOAD=true
-WAN_T2V_GUIDANCE_SCALE=6
-WAN_T2V_FLOW_SHIFT=8
+WAN_T2V_GUIDANCE_SCALE=5
+WAN_T2V_FLOW_SHIFT=5
 ```
 
-Clips are cached under `uploads/{project_id}/t2v_cache/`. Status: `GET /health` → `wan_t2v`, or `GET /api/v1/video/wan-t2v/status`.
+AI Motion clips are cached under `uploads/{project_id}/i2v_cache/`. Text-to-video clips use `uploads/{project_id}/t2v_cache/`. Status: `GET /health` → `wan_t2v`, or `GET /api/v1/video/wan-t2v/status`.
 
 ## Local development (without full compose)
+
+On this PC, one command starts Postgres on 5433, Redis on 6380, the API, both Celery workers, beat, the Vite app, ComfyUI, and ACE-Step:
+
+```bat
+naratto start
+naratto stop
+naratto restart
+naratto status
+naratto logs
+naratto help
+```
+
+`naratto all` is the same as `naratto start`. `naratto` with no command also starts.
+
+`restart` is the one to use after a Wan or worker code change. It stops the render worker first, so Wan 2.2 leaves the GPU, then starts a new worker. Wan 2.2 TI2V 5B is not its own server. The render worker loads `Wan-AI/Wan2.2-TI2V-5B-Diffusers` on export and unloads it when the render ends. The command does not preload those weights, because ComfyUI and ACE-Step are started too. To keep Wan loaded and leave the other GPU servers off, run `naratto preload`.
+
+Logs are under `backend\data\run\`. Postgres and Redis containers stay up after `stop`.
 
 ### Prerequisites
 
@@ -191,11 +178,11 @@ export SECRET_KEY=dev-secret-change-me-in-production-min-32
 uvicorn app.main:app --reload --port 8000
 ```
 
-Workers (separate terminals):
+Workers (separate terminals). Story planning, music, and scene images stay off the render worker so Wan does not share that process. On Windows use `--pool=solo`.
 
 ```bash
-celery -A app.workers.celery_app.celery_app worker -Q tts,default -c 2 -l info
-celery -A app.workers.celery_app.celery_app worker -Q render -c 1 -l info
+celery -A app.workers.celery_app.celery_app worker -Q tts,default,story-generation,music-generation,image-generation --pool=solo -l info
+celery -A app.workers.celery_app.celery_app worker -Q render --pool=solo -l info
 ```
 
 ### Frontend
@@ -208,14 +195,24 @@ npm run dev
 
 Vite proxies `/api` to `http://localhost:8000`.
 
+### Local story model
+
+Install [Ollama](https://ollama.com) and pull a Qwen3 instruct model that fits the GPU:
+
+```bash
+ollama pull qwen3:8b
+```
+
+Set `LOCAL_LLM_MODEL=local/qwen3:8b` in `.env`. That id becomes the story default and shows under Local in the Model menu. Ollama listens on `http://127.0.0.1:11434/v1`. The worker unloads the model after each story so ComfyUI, ACE-Step, or Wan can use the GPU. LM Studio on port 1234 works too: point `LOCAL_LLM_BASE_URL` at `http://127.0.0.1:1234/v1` and set `LOCAL_LLM_MODEL` to a loaded model id.
+
 ## Architecture
 
 See [docs/design.md](docs/design.md) for the full system design.
 
 ```text
 React → FastAPI → PostgreSQL
-              ↘ Redis/Celery → worker-tts (Deepgram)
-                             → worker-render (FFmpeg) → MP4
+              ↘ Redis/Celery → worker (TTS, story, music, images)
+                             → worker-render (Wan and FFmpeg) → MP4
 ```
 
 ## API overview
@@ -241,7 +238,7 @@ React → FastAPI → PostgreSQL
 | `WAN_I2V_MOCK` | `true` | FFmpeg stand-in instead of real Wan2.1 |
 | `WAN_I2V_BACKEND` | `mock` | `mock` \| `diffusers` \| `cli` |
 | `WAN_I2V_MODEL_ID` | I2V-14B-480P Diffusers | Hugging Face model id |
-| `WAN_T2V_MODEL_ID` | `Wan-AI/Wan2.1-T2V-1.3B-Diffusers` | Local text-to-video, no ComfyUI |
+| `WAN_T2V_MODEL_ID` | `Wan-AI/Wan2.2-TI2V-5B-Diffusers` | Local Wan2.2 TI2V 5B, no ComfyUI |
 | `WAN_T2V_BACKEND` | `auto` | `auto` \| `diffusers` \| `cli` \| `mock` |
 | `WAN_T2V_MOCK` | `false` | FFmpeg stand-in instead of real T2V |
 | `SECRET_KEY` | dev string | JWT + media HMAC |

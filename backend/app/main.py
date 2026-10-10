@@ -44,6 +44,9 @@ async def lifespan(_: FastAPI):
             conn.exec_driver_sql(
                 "ALTER TABLE slides ADD COLUMN IF NOT EXISTS motion_prompt TEXT"
             )
+            conn.exec_driver_sql(
+                "ALTER TABLE story_jobs ADD COLUMN IF NOT EXISTS celery_task_id VARCHAR(255)"
+            )
     except Exception:
         pass
     yield
@@ -90,15 +93,16 @@ def create_app() -> FastAPI:
         from app.services.openrouter_catalog import load_catalog
 
         from app.services.gemini_llm import gemini_catalog_rows
-        from app.services.local_llm import local_catalog_rows
+        from app.services.local_llm import configured_local_model, local_catalog_rows
         from app.services.openai_llm import openai_catalog_rows
 
         catalog = load_catalog(settings)
         openrouter = [{**row, "provider": row.get("provider") or "openrouter"} for row in catalog.models]
         local_rows, local_up = local_catalog_rows(settings)
+        local_default = configured_local_model(settings)
         return {
             "source": catalog.source,
-            "default_model": catalog.default_model,
+            "default_model": local_default or catalog.default_model,
             "default_model_is_free": catalog.default_model in catalog.ids(),
             "key_configured": bool(settings.openrouter_api_key),
             "gemini_key_configured": bool(settings.gemini_api_key),

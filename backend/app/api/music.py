@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Literal
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Request, UploadFile
+from fastapi import APIRouter, Depends, File, UploadFile
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -16,7 +16,7 @@ from app.db.session import get_db
 from app.dependencies import get_current_user, get_storage_dep
 from app.schemas.common import MusicAssetOut
 from app.services.duration import effective_duration_ms
-from app.services.music_job import execute_music_job
+from app.services.stage_job import dispatch_stage_task
 from app.services.story_slides import align_story_slide_durations
 from app.services.storage import LocalStorage
 from app.services.story_job import latest_story_job
@@ -132,8 +132,6 @@ def _music_job_out(job: StoryJob) -> dict:
 @router.post("/projects/{project_id}/music/generate", response_model=None)
 def generate_music(
     project_id: UUID,
-    request: Request,
-    background: BackgroundTasks,
     body: MusicGenerateRequest | None = None,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -181,5 +179,7 @@ def generate_music(
     db.add(project)
     db.commit()
     db.refresh(job)
-    background.add_task(execute_music_job, job.id, getattr(request.app.state, "music_provider", None))
+    from app.workers.tasks import generate_music as generate_music_task
+
+    dispatch_stage_task(db, job, lambda: generate_music_task.delay(str(job.id)))
     return JSONResponse(_music_job_out(job), status_code=202)

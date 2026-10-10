@@ -24,21 +24,21 @@ export default function WanT2vBanner() {
   if (data.real_ai && data.load_state === "loaded") {
     return (
       <Alert severity="success" variant="outlined">
-        Wan2.1 T2V 1.3B is loaded. You can generate videos.
+        Wan2.2 TI2V 5B is loaded. You can generate videos.
       </Alert>
     );
   }
   if (data.real_ai && data.load_state === "loading") {
     return (
       <Alert severity="info" variant="outlined">
-        Wan2.1 T2V 1.3B is loading. Wait until this says you can generate videos.
+        Wan2.2 TI2V 5B is loading. Wait until this says you can generate videos.
       </Alert>
     );
   }
   if (data.real_ai) {
     return (
       <Alert severity="info" variant="outlined">
-        Wan2.1 T2V 1.3B is installed via <strong>{data.backend}</strong>. It loads on the first
+        Wan2.2 TI2V 5B is installed via <strong>{data.backend}</strong>. It loads on the first
         clip, then this note changes to say you can generate videos.
       </Alert>
     );
@@ -46,14 +46,14 @@ export default function WanT2vBanner() {
   if (data.mock) {
     return (
       <Alert severity="warning" variant="outlined">
-        <strong>Mock mode</strong> — this is a solid-color stand-in, not Wan2.1. Set{" "}
-        <code>WAN_T2V_MOCK=false</code> and install the local 1.3B weights.
+        <strong>Mock mode</strong> — this is a solid-color stand-in, not Wan2.2. Set{" "}
+        <code>WAN_T2V_MOCK=false</code> and install the local TI2V 5B weights.
       </Alert>
     );
   }
   return (
     <Alert severity="error" variant="outlined">
-      Wan2.1 T2V 1.3B is not ready. {data.error || data.hint || "Install the local model."} This
+      Wan2.2 TI2V 5B is not ready. {data.error || data.hint || "Install the local model."} This
       path does not use ComfyUI.
     </Alert>
   );

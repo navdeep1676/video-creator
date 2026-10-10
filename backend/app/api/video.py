@@ -125,7 +125,7 @@ def wan_i2v_capability(
 def wan_t2v_capability(
     user: User = Depends(get_current_user),
 ) -> dict:
-    """Wan2.1 T2V-1.3B status. Local Diffusers or official CLI, not ComfyUI."""
+    """Wan2.2 TI2V 5B status. Local Diffusers or official CLI, not ComfyUI."""
     from app.services.wan_t2v import wan_t2v_status
 
     return wan_t2v_status()

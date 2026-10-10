@@ -17,6 +17,7 @@ from app.services.gemini_llm import GeminiLLMProvider, is_gemini_model
 from app.services.local_llm import LocalLLMProvider, is_local_model
 from app.services.openai_llm import OpenAILLMProvider, is_openai_model
 from app.services.openrouter_llm import LLMProvider, OpenRouterLLMProvider
+from app.services.stage_job import begin_stage_job
 from app.services.story_planner import StoryPlan, plan_story, plan_to_json
 from app.services.story_slides import replace_project_slides
 from app.services.storage import get_storage
@@ -40,12 +41,16 @@ def build_llm_provider(settings: Settings, model: str, override: LLMProvider | N
     return OpenRouterLLMProvider(tuned)
 
 
-def execute_story_job(job_id: uuid.UUID, provider: LLMProvider | None = None) -> None:
+def execute_story_job(
+    job_id: uuid.UUID,
+    provider: LLMProvider | None = None,
+    task_id: str | None = None,
+) -> None:
     settings = get_settings()
     session = SessionLocal()
     try:
-        job = session.get(StoryJob, job_id)
-        if job is None or job.status not in {"queued", "running"}:
+        job = begin_stage_job(session, job_id, task_id)
+        if job is None:
             return
         project = session.get(Project, job.project_id)
         if project is None:
@@ -53,10 +58,10 @@ def execute_story_job(job_id: uuid.UUID, provider: LLMProvider | None = None) ->
             job.error = "Project not found"
             session.commit()
             return
-        job.status = "running"
-        job.attempts += 1
-        session.commit()
-        active = provider or build_llm_provider(settings, str(job.payload.get("llm_model") or settings.openrouter_model))
+        active = provider or build_llm_provider(
+            settings,
+            str(job.payload.get("llm_model") or settings.openrouter_model),
+        )
         plan = plan_story(SimpleNamespace(**job.payload), active, settings)
         save_story(session, project, plan)
         job.status = "succeeded"

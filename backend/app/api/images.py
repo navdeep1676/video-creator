@@ -15,6 +15,7 @@ from app.db.models import Story, StoryJob, User
 from app.db.session import get_db
 from app.dependencies import get_current_user
 from app.services.music_job import latest_job
+from app.services.stage_job import dispatch_stage_task
 from app.utils.exceptions import AppError
 from app.workers.tasks import generate_project_images
 
@@ -77,12 +78,5 @@ def generate_images(
     db.add(job)
     db.commit()
     db.refresh(job)
-    try:
-        generate_project_images.delay(str(job.id))
-    except Exception as exc:
-        job.status = "failed"
-        job.error = f"Could not queue the image job: {exc}"
-        db.add(job)
-        db.commit()
-        raise AppError("QUEUE", job.error, 503) from exc
+    dispatch_stage_task(db, job, lambda: generate_project_images.delay(str(job.id)))
     return JSONResponse(_job_out(job), status_code=202)

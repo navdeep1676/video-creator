@@ -75,7 +75,7 @@ type Slide = {
   effective_duration_ms: number;
   transition: string;
   animation: string;
-  /** Motion or text prompt for Wan2.1 I2V / T2V */
+  /** Motion or text prompt for Wan2.2 TI2V 5B */
   motion_prompt?: string | null;
   narration: Narration | null;
 };
@@ -1183,8 +1183,8 @@ export default function ProjectPage() {
                     >
                       <MenuItem value="none">None (static)</MenuItem>
                       <MenuItem value="ken_burns">Ken Burns (slow zoom)</MenuItem>
-                      <MenuItem value="wan_i2v">AI Motion (Wan2.1 1.3B)</MenuItem>
-                      <MenuItem value="wan_t2v">Text to video (Wan2.1 T2V 1.3B)</MenuItem>
+                      <MenuItem value="wan_i2v">AI Motion (Wan2.2 TI2V 5B)</MenuItem>
+                      <MenuItem value="wan_t2v">Text to video (Wan2.2 TI2V 5B)</MenuItem>
                     </Select>
                   </FormControl>
                 </Stack>
@@ -1192,7 +1192,7 @@ export default function ProjectPage() {
                   <>
                     <WanT2vBanner />
                     <TextField
-                      label={draft.animation === "wan_t2v" ? "Video prompt (Wan2.1 T2V 1.3B)" : "Motion prompt (Wan2.1)"}
+                      label={draft.animation === "wan_t2v" ? "Video prompt (Wan2.2 TI2V 5B)" : "Motion prompt (Wan2.2 TI2V 5B)"}
                       value={draft.motion_prompt}
                       onChange={(e) =>
                         setDraft((d) => (d ? { ...d, motion_prompt: e.target.value } : d))
@@ -1207,8 +1207,8 @@ export default function ProjectPage() {
                       }
                       helperText={
                         draft.animation === "wan_t2v"
-                          ? "Describes the whole clip. No still image is required. Runs locally with Diffusers or the official Wan script, not ComfyUI. Falls back to narration if empty."
-                          : "Describes how the still should move (camera, wind, people walking…). Falls back to narration if empty. Real Wan2.1 needs FAL_KEY or REPLICATE_API_TOKEN in .env."
+                          ? "Describes the whole clip. No still image is required. Runs locally with Wan2.2 TI2V 5B, not ComfyUI. Falls back to narration if empty."
+                          : "Describes how the still should move. The still is the first frame. Falls back to narration if empty. Runs locally with Wan2.2 TI2V 5B."
                       }
                     />
                   </>
