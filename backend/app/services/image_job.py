@@ -19,7 +19,10 @@ from app.services.comfyui import (
     ComfyUIImageProvider,
     ImageGenerationError,
     build_prompt_graph,
+    ensure_comfyui_server,
     qwen_canvas,
+    should_manage_comfyui,
+    stop_comfyui_server,
 )
 from app.services.openrouter_llm import ProviderUnavailable
 from app.services.image_fit import fit_image_to_aspect
@@ -48,10 +51,26 @@ def execute_image_job(
             return
         force = bool((job.payload or {}).get("force"))
         active = provider or ComfyUIImageProvider(settings)
+        manage_gpu = should_manage_comfyui(settings, injected_provider=provider is not None)
+
         def on_progress(percent: int, detail: str) -> None:
             report_progress(session, job, percent, detail)
 
-        errors = _draw_project(session, project, settings, active, force, on_progress=on_progress)
+        def on_start() -> None:
+            if not manage_gpu:
+                return
+            report_progress(session, job, 0, "Starting ComfyUI")
+            ensure_comfyui_server(settings)
+
+        errors = _draw_project(
+            session,
+            project,
+            settings,
+            active,
+            force,
+            on_progress=on_progress,
+            on_start=on_start if manage_gpu else None,
+        )
         active.unload()
         if errors:
             _fail(job, "; ".join(errors))
@@ -72,6 +91,11 @@ def execute_image_job(
         if active is not None:
             active.unload()
     finally:
+        if "manage_gpu" in locals() and manage_gpu:
+            try:
+                stop_comfyui_server()
+            except Exception:
+                logger.exception("[IMAGE] ComfyUI did not stop")
         session.close()
         if provider is None and active is not None:
             active.close()
@@ -84,6 +108,7 @@ def _draw_project(
     provider: ComfyUIImageProvider,
     force: bool,
     on_progress: Callable[[int, str], None] | None = None,
+    on_start: Callable[[], None] | None = None,
 ) -> list[str]:
     slides = list(
         session.scalars(
@@ -123,6 +148,8 @@ def _draw_project(
             continue
         pending.append((slide, prompt))
     total = len(pending)
+    if pending and on_start is not None:
+        on_start()
     published = {"percent": -1, "detail": ""}
 
     def publish(percent: int, detail: str) -> None:

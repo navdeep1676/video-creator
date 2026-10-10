@@ -10,10 +10,13 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import os
+import subprocess
 import time
 import uuid
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 
@@ -21,6 +24,113 @@ from app.config import Settings
 from app.services.openrouter_llm import ProviderUnavailable
 
 logger = logging.getLogger(__name__)
+
+
+def comfyui_is_local(settings: Settings) -> bool:
+    host = (urlparse(settings.comfyui_base_url).hostname or "").lower()
+    return host in {"127.0.0.1", "localhost", "::1"}
+
+
+def should_manage_comfyui(settings: Settings, *, injected_provider: bool) -> bool:
+    """True when this image job should start ComfyUI and stop it when the job ends."""
+    if injected_provider or not settings.comfyui_manage_process:
+        return False
+    return comfyui_is_local(settings)
+
+
+def _comfy_dir(settings: Settings) -> Path:
+    raw = (settings.comfyui_dir or "").strip()
+    if raw:
+        return Path(raw)
+    return Path.home() / "ComfyUI"
+
+
+def _comfy_python(settings: Settings) -> Path:
+    raw = (settings.comfyui_python or "").strip()
+    if raw:
+        return Path(raw)
+    return _comfy_dir(settings) / "venv" / "Scripts" / "python.exe"
+
+
+def comfyui_is_up(settings: Settings) -> bool:
+    url = settings.comfyui_base_url.rstrip("/") + "/system_stats"
+    try:
+        response = httpx.get(url, timeout=2)
+    except httpx.HTTPError:
+        return False
+    return response.status_code < 500
+
+
+def ensure_comfyui_server(settings: Settings) -> None:
+    """Start the local ComfyUI process when Generate images needs it."""
+    if comfyui_is_up(settings):
+        return
+    python = _comfy_python(settings)
+    workdir = _comfy_dir(settings)
+    if not python.is_file():
+        raise ProviderUnavailable(
+            f"ComfyUI Python was not found at {python}. Scene images need the local ComfyUI install."
+        )
+    parsed = urlparse(settings.comfyui_base_url)
+    host = parsed.hostname or "127.0.0.1"
+    port = parsed.port or 8188
+    log_dir = Path(__file__).resolve().parents[2] / "data" / "run"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_handle = (log_dir / "comfy.err.log").open("a", encoding="utf-8")
+    env = os.environ.copy()
+    env.pop("PYTHONPATH", None)
+    env.pop("WAN_T2V_PRELOAD", None)
+    env.pop("HSA_OVERRIDE_GFX_VERSION", None)
+    logger.info("Starting ComfyUI at %s", settings.comfyui_base_url)
+    flags = 0
+    if os.name == "nt":
+        flags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
+    try:
+        subprocess.Popen(
+            [str(python), "main.py", "--listen", host, "--port", str(port)],
+            cwd=str(workdir),
+            env=env,
+            stdout=log_handle,
+            stderr=subprocess.STDOUT,
+            creationflags=flags,
+        )
+    finally:
+        log_handle.close()
+    deadline = time.monotonic() + 180
+    while time.monotonic() < deadline:
+        if comfyui_is_up(settings):
+            return
+        time.sleep(1)
+    raise ProviderUnavailable("ComfyUI did not answer /system_stats within 180 seconds. See backend/data/run/comfy.err.log.")
+
+
+def stop_comfyui_server() -> None:
+    """Stop the local ComfyUI process so its GPU context is released."""
+    _stop_python_matching("main.py", "8188")
+    logger.info("Stopped ComfyUI so the GPU is free")
+
+
+def _stop_python_matching(marker: str, port: str) -> None:
+    if os.name != "nt":
+        return
+    script = (
+        "Get-CimInstance Win32_Process | "
+        "Where-Object { $_.Name -eq 'python.exe' -and $_.CommandLine -like ('*{0}*' -f '"
+        + marker
+        + "') -and $_.CommandLine -like ('*{0}*' -f '"
+        + port
+        + "') } | ForEach-Object { $_.ProcessId }"
+    )
+    listed = subprocess.run(
+        ["powershell", "-NoProfile", "-Command", script],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    pids = [line.strip() for line in listed.stdout.splitlines() if line.strip().isdigit()]
+    for pid in pids:
+        subprocess.run(["taskkill", "/F", "/T", "/PID", pid], capture_output=True, check=False)
+
 
 REQUIRED_NODES = (
     "UNETLoader",

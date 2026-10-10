@@ -194,7 +194,7 @@ function Show-Status {
     Get-ServiceLine "redis" 6380 "naratto-redis"
     Get-ServiceLine "api" 8000 "http://127.0.0.1:8000/docs"
     Get-ServiceLine "frontend" 5173 "http://127.0.0.1:5173"
-    Get-ServiceLine "ollama" 11434 "qwen3:8b"
+    Get-ServiceLine "ollama" 11434 "qwen2.5:7b"
     Get-ServiceLine "comfyui" 8188 "scene images"
     Get-ServiceLine "ace-step" 8001 "music"
     $map = Read-PidMap
@@ -303,39 +303,8 @@ function Start-NarattoApp {
     }
 
     if (-not $PreloadWan) {
-        $comfyPy = Join-Path $env:USERPROFILE "ComfyUI\venv\Scripts\python.exe"
-        $comfyDir = Join-Path $env:USERPROFILE "ComfyUI"
-        if ((Get-ListenerProcessId 8188) -eq 0 -and (Test-Path $comfyPy)) {
-            Write-Step "Starting ComfyUI on http://127.0.0.1:8188"
-            Clear-ProcessEnv @("PYTHONPATH", "WAN_T2V_PRELOAD", "HSA_OVERRIDE_GFX_VERSION")
-            $started["comfy"] = Start-Logged "comfy" $comfyPy @("main.py", "--listen", "127.0.0.1", "--port", "8188") $comfyDir
-            Set-ProcessEnv $appEnv
-        } elseif (-not (Test-Path $comfyPy)) {
-            Write-Step "ComfyUI was not found at $comfyPy"
-        }
-
-        $aceDir = Join-Path $env:USERPROFILE "ACE-Step-1.5"
-        $acePy = Join-Path $aceDir "venv_rocm\Scripts\python.exe"
-        if ((Get-ListenerProcessId 8001) -eq 0 -and (Test-Path $acePy)) {
-            Write-Step "Starting ACE-Step on http://127.0.0.1:8001"
-            Clear-ProcessEnv @("PYTHONPATH", "WAN_T2V_PRELOAD")
-            Set-ProcessEnv @{
-                ACESTEP_LM_BACKEND       = "pt"
-                ACESTEP_OFFLOAD_TO_CPU   = "true"
-                ACESTEP_CONFIG_PATH      = "acestep-v15-turbo"
-                ACESTEP_LM_MODEL_PATH    = "acestep-5Hz-lm-0.6B"
-                ACESTEP_INIT_LLM         = "false"
-                HSA_OVERRIDE_GFX_VERSION = "11.0.0"
-                MIOPEN_FIND_MODE         = "FAST"
-                TORCH_COMPILE_BACKEND    = "eager"
-                TOKENIZERS_PARALLELISM   = "false"
-            }
-            $started["ace"] = Start-Logged "ace" $acePy @("-u", "acestep\api_server.py", "--host", "127.0.0.1", "--port", "8001") $aceDir
-            Clear-ProcessEnv @("HSA_OVERRIDE_GFX_VERSION")
-            Set-ProcessEnv $appEnv
-        } elseif (-not (Test-Path $acePy)) {
-            Write-Step "ACE-Step was not found at $acePy"
-        }
+        Write-Step "ComfyUI stays stopped until Generate images"
+        Write-Step "ACE-Step stays stopped until Generate music"
     }
 
     if (-not $hasRender) {
@@ -356,16 +325,7 @@ function Start-NarattoApp {
         Write-Step "Render worker is already running. Use restart -PreloadWan to load Wan at startup."
     }
 
-    if ((Get-ListenerProcessId 11434) -eq 0) {
-        $ollama = Join-Path $env:LOCALAPPDATA "Programs\Ollama\ollama.exe"
-        if (Test-Path $ollama) {
-            Write-Step "Starting Ollama"
-            Clear-ProcessEnv @("PYTHONPATH", "WAN_T2V_PRELOAD")
-            $started["ollama"] = Start-Logged "ollama" $ollama @("serve") $Root
-        } else {
-            Write-Step "Ollama was not found. Local stories need it on port 11434."
-        }
-    }
+    Write-Step "Ollama stays stopped until a local story. Qwen unloads when the story ends."
 
     $existing = Read-PidMap
     foreach ($key in $started.Keys) { $existing[$key] = $started[$key] }
@@ -380,7 +340,7 @@ function Start-NarattoApp {
     if ($PreloadWan) {
         Write-Step "  Wan 2.2 preloaded in the render worker only. ComfyUI and ACE-Step were not started."
     } else {
-        Write-Step "  Wan 2.2 TI2V 5B stays unloaded until an export. ComfyUI and ACE-Step may use the GPU until then."
+        Write-Step "  Wan 2.2 TI2V 5B stays unloaded until an export. ACE-Step stays stopped until Generate music."
     }
     Write-Step "  Logs    $RunDir"
 }

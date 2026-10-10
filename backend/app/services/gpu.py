@@ -23,9 +23,9 @@ def empty_snapshot() -> dict[str, Any]:
     }
 
 
-def snapshot(settings: Settings) -> dict[str, Any]:
+def snapshot(settings: Settings, timeout: float = 1.5) -> dict[str, Any]:
     result = empty_snapshot()
-    comfy = _from_comfy(settings.comfyui_base_url)
+    comfy = _from_comfy(settings.comfyui_base_url, timeout)
     if comfy:
         result.update(comfy)
     rocm = _from_rocm()
@@ -42,9 +42,9 @@ def snapshot(settings: Settings) -> dict[str, Any]:
     return result
 
 
-def _from_comfy(base_url: str) -> dict[str, Any] | None:
+def _from_comfy(base_url: str, timeout: float = 1.5) -> dict[str, Any] | None:
     try:
-        response = httpx.get(f"{base_url.rstrip('/')}/system_stats", timeout=1.5)
+        response = httpx.get(f"{base_url.rstrip('/')}/system_stats", timeout=timeout)
         response.raise_for_status()
         body = response.json()
     except (httpx.HTTPError, OSError, ValueError):

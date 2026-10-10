@@ -7,9 +7,11 @@ from app.config import Settings
 from app.services.ace_step import (
     AceStepMusicProvider,
     MusicGenerationError,
+    _child_env,
     generate_music_bytes,
     mark_music_failed,
     release_body,
+    should_manage_acestep,
 )
 
 WAV = b"RIFF" + (36).to_bytes(4, "little") + b"WAVEfmt "
@@ -57,6 +59,26 @@ def _posted(sink: list) -> dict:
         if method == "POST" and path == "/release_task":
             return json.loads(content)
     raise AssertionError("ACE-Step was not called")
+
+
+def test_manage_acestep_only_for_a_local_music_job():
+    settings = _settings()
+    payload = {"music_mode": "background", "content_type": "horror", "duration_seconds": 30}
+    assert should_manage_acestep(settings, payload, injected_provider=False) is False
+    local = _settings()
+    local.acestep_base_url = "http://127.0.0.1:8001"
+    assert should_manage_acestep(local, payload, injected_provider=False) is True
+    assert should_manage_acestep(local, payload, injected_provider=True) is False
+    assert should_manage_acestep(local, {"music_mode": "none"}, injected_provider=False) is False
+    local.acestep_manage_process = False
+    assert should_manage_acestep(local, payload, injected_provider=False) is False
+
+
+def test_child_env_does_not_load_weights_at_startup():
+    env = _child_env()
+    assert env["ACESTEP_NO_INIT"] == "true"
+    assert env["ACESTEP_OFFLOAD_TO_CPU"] == "true"
+    assert "PYTHONPATH" not in env
 
 
 def test_request_includes_lyrics_and_audio_duration():

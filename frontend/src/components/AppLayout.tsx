@@ -27,6 +27,7 @@ import { Link as RouterLink, Outlet, NavLink, useLocation, useNavigate } from "r
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "../auth/AuthContext";
 import BrandLogo from "./BrandLogo";
+import SystemMonitor from "./SystemMonitor";
 import { brandColors } from "../theme";
 
 const DRAWER_WIDTH = 268;
@@ -388,7 +389,22 @@ export default function AppLayout() {
         }}
       >
         <Toolbar sx={{ minHeight: { xs: 64, md: 68 } }} />
-        <Box sx={{ p: { xs: 2, sm: 3 }, maxWidth: 1200, mx: "auto" }}>
+        <Box
+          sx={{
+            position: "sticky",
+            top: { xs: 64, md: 68 },
+            zIndex: (t) => t.zIndex.appBar - 1,
+            px: { xs: 2, sm: 3 },
+            pt: 2,
+            pb: 0.5,
+            bgcolor: "background.default",
+          }}
+        >
+          <Box sx={{ maxWidth: 1200, mx: "auto" }}>
+            <SystemMonitor />
+          </Box>
+        </Box>
+        <Box sx={{ px: { xs: 2, sm: 3 }, pt: 1.5, pb: { xs: 2, sm: 3 }, maxWidth: 1200, mx: "auto" }}>
           <AnimatePresence mode="wait">
             <motion.div
               key={location.pathname}

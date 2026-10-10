@@ -10,13 +10,14 @@ from __future__ import annotations
 import inspect
 import json
 import logging
+import os
 import shutil
 import subprocess
 import tempfile
 import time
 from pathlib import Path
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 import httpx
 
@@ -67,6 +68,129 @@ def release_body(payload: dict, settings: Settings) -> dict | None:
         "model": settings.music_model or "acestep-v15-turbo",
         "vocal_language": vocal_language(str(payload.get("language") or "en")),
     }
+
+
+def acestep_is_local(settings: Settings) -> bool:
+    host = (urlparse(settings.acestep_base_url).hostname or "").lower()
+    return host in {"127.0.0.1", "localhost", "::1"}
+
+
+def should_manage_acestep(settings: Settings, payload: dict, *, injected_provider: bool) -> bool:
+    """True when this job should start the local server and stop it after the track."""
+    if injected_provider or not settings.acestep_manage_process:
+        return False
+    if not acestep_is_local(settings):
+        return False
+    return release_body(payload, settings) is not None
+
+
+def _install_dir(settings: Settings) -> Path:
+    raw = (settings.acestep_dir or "").strip()
+    if raw:
+        return Path(raw)
+    return Path.home() / "ACE-Step-1.5"
+
+
+def _python_path(settings: Settings) -> Path:
+    raw = (settings.acestep_python or "").strip()
+    if raw:
+        return Path(raw)
+    return _install_dir(settings) / "venv_rocm" / "Scripts" / "python.exe"
+
+
+def _server_endpoint(settings: Settings) -> tuple[str, int]:
+    parsed = urlparse(settings.acestep_base_url)
+    return parsed.hostname or "127.0.0.1", parsed.port or 8001
+
+
+def server_is_up(settings: Settings) -> bool:
+    url = settings.acestep_base_url.rstrip("/") + "/health"
+    try:
+        response = httpx.get(url, timeout=2)
+    except httpx.HTTPError:
+        return False
+    return response.status_code < 500
+
+
+def _child_env() -> dict[str, str]:
+    env = os.environ.copy()
+    env.pop("PYTHONPATH", None)
+    env.pop("WAN_T2V_PRELOAD", None)
+    env.update(
+        {
+            "ACESTEP_LM_BACKEND": "pt",
+            "ACESTEP_OFFLOAD_TO_CPU": "true",
+            "ACESTEP_CONFIG_PATH": "acestep-v15-turbo",
+            "ACESTEP_LM_MODEL_PATH": "acestep-5Hz-lm-0.6B",
+            "ACESTEP_INIT_LLM": "false",
+            "ACESTEP_NO_INIT": "true",
+            "HSA_OVERRIDE_GFX_VERSION": "11.0.0",
+            "MIOPEN_FIND_MODE": "FAST",
+            "TORCH_COMPILE_BACKEND": "eager",
+            "TOKENIZERS_PARALLELISM": "false",
+        }
+    )
+    return env
+
+
+def ensure_acestep_server(settings: Settings) -> None:
+    """Start the local ACE-Step process when Generate music needs it."""
+    if server_is_up(settings):
+        return
+    python = _python_path(settings)
+    workdir = _install_dir(settings)
+    if not python.is_file():
+        raise MusicGenerationError(
+            f"ACE-Step Python was not found at {python}. Install it with scripts\\setup-acestep-windows.bat."
+        )
+    host, port = _server_endpoint(settings)
+    log_dir = Path(__file__).resolve().parents[2] / "data" / "run"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_handle = (log_dir / "ace.err.log").open("a", encoding="utf-8")
+    logger.info("Starting ACE-Step at %s", settings.acestep_base_url)
+    flags = 0
+    if os.name == "nt":
+        flags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
+    try:
+        subprocess.Popen(
+            [str(python), "-u", r"acestep\api_server.py", "--host", host, "--port", str(port)],
+            cwd=str(workdir),
+            env=_child_env(),
+            stdout=log_handle,
+            stderr=subprocess.STDOUT,
+            creationflags=flags,
+        )
+    finally:
+        log_handle.close()
+    deadline = time.monotonic() + 120
+    while time.monotonic() < deadline:
+        if server_is_up(settings):
+            return
+        time.sleep(1)
+    raise MusicGenerationError("ACE-Step did not answer /health within 120 seconds. See backend/data/run/ace.err.log.")
+
+
+def stop_acestep_server() -> None:
+    """Stop the local API process so its GPU context is released."""
+    if os.name != "nt":
+        return
+    script = (
+        "Get-CimInstance Win32_Process | "
+        "Where-Object { $_.Name -eq 'python.exe' -and $_.CommandLine -like ('*{0}*' -f 'api_server.py') "
+        "-and $_.CommandLine -like ('*{0}*' -f 'acestep') } | "
+        "ForEach-Object { $_.ProcessId }"
+    )
+    listed = subprocess.run(
+        ["powershell", "-NoProfile", "-Command", script],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    pids = [line.strip() for line in listed.stdout.splitlines() if line.strip().isdigit()]
+    for pid in pids:
+        subprocess.run(["taskkill", "/F", "/T", "/PID", pid], capture_output=True, check=False)
+    if pids:
+        logger.info("Stopped ACE-Step so the GPU is free")
 
 
 def generate_music_bytes(provider: Any, payload: dict, settings: Settings, on_tick=None) -> bytes | None:

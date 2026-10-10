@@ -41,6 +41,12 @@ class Settings(BaseSettings):
     comfyui_base_url: str = "http://127.0.0.1:8188"
     comfyui_timeout_s: float = 900
     comfyui_poll_s: float = 2
+    # Local ComfyUI starts on Generate images and exits afterward so it does not hold the GPU.
+    comfyui_manage_process: bool = True
+    comfyui_dir: str = ""
+    comfyui_python: str = ""
+    # Local Ollama starts for a Qwen story and the model is unloaded when the story ends.
+    ollama_manage_process: bool = True
     image_workflow: str = "configs/workflows/qwen_image_2_1_t2i.json"
     image_workflow_map: str = "configs/workflows/qwen_image_2_1_t2i.map.json"
     image_model: str = "qwen_image_2.1_int8_convrot.safetensors"
@@ -58,6 +64,10 @@ class Settings(BaseSettings):
     acestep_thinking: bool = False
     acestep_timeout_s: float = 900
     acestep_poll_s: float = 2
+    # Local server starts on Generate music and exits afterward so it does not hold the GPU.
+    acestep_manage_process: bool = True
+    acestep_dir: str = ""
+    acestep_python: str = ""
 
     deepgram_api_key: str = ""
     deepgram_base_url: str = "https://api.deepgram.com/v1/speak"

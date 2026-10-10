@@ -66,29 +66,42 @@ const DURATIONS = [30, 60, 140, 180, 300];
 
 function StageProgress({
   job,
+  pending = false,
   title,
   detail,
   unknownTimeNote,
+  pinTitle = false,
 }: {
   job: StageJob | null | undefined;
+  pending?: boolean;
   title: string;
   detail: string;
   unknownTimeNote: string;
+  pinTitle?: boolean;
 }) {
-  if (!job || (job.status !== "queued" && job.status !== "running")) return null;
-  const waiting = job.status === "queued";
+  const live = !!job && (job.status === "queued" || job.status === "running");
+  if (!live && !pending) return null;
+  const waiting = !live || job?.status === "queued";
+  const liveDetail = live ? job?.detail : null;
   return (
     <JobProgress
       active
       mode={waiting ? "waiting" : "working"}
-      progress={job.progress || 0}
-      title={job.detail || title}
-      detail={detail}
-      startedAt={job.started_at}
-      createdAt={job.created_at}
+      progress={live ? job?.progress || 0 : 0}
+      title={pinTitle ? title : liveDetail || title}
+      detail={pinTitle ? liveDetail || detail : detail}
+      startedAt={live ? job?.started_at : null}
+      createdAt={live ? job?.created_at : null}
       unknownTimeNote={unknownTimeNote}
     />
   );
+}
+
+function stageJobFrom(data: unknown): StageJob | null {
+  if (!data || typeof data !== "object") return null;
+  const row = data as Partial<StageJob>;
+  if (!row.id || !row.status) return null;
+  return row as StageJob;
 }
 
 function readStoryFile(file: File): Promise<Record<string, unknown>> {
@@ -262,8 +275,23 @@ export default function StoryPanel({ projectId, defaultTopic }: { projectId: str
 
   const generateMusic = useMutation({
     mutationFn: async () => (await api.post(`/projects/${projectId}/music/generate`, { music_mode: musicMode })).data,
-    onSuccess: async () => {
+    onSuccess: async (data) => {
       setFormError("");
+      const next = stageJobFrom(data);
+      if (next) {
+        qc.setQueryData<StoryPayload>(["story", projectId], (current) =>
+          current
+            ? {
+                ...current,
+                music: {
+                  job: next,
+                  audio_url: current.music?.audio_url ?? null,
+                  filename: current.music?.filename ?? null,
+                },
+              }
+            : current
+        );
+      }
       await qc.invalidateQueries({ queryKey: ["story", projectId] });
     },
     onError: (error) => setFormError(errMessage(error)),
@@ -272,8 +300,14 @@ export default function StoryPanel({ projectId, defaultTopic }: { projectId: str
   const generateImages = useMutation({
     mutationFn: async (force: boolean) =>
       (await api.post(`/projects/${projectId}/images/generate`, { force })).data,
-    onSuccess: async () => {
+    onSuccess: async (data) => {
       setFormError("");
+      const next = stageJobFrom(data);
+      if (next) {
+        qc.setQueryData<StoryPayload>(["story", projectId], (current) =>
+          current ? { ...current, images: { job: next } } : current
+        );
+      }
       await qc.invalidateQueries({ queryKey: ["story", projectId] });
     },
     onError: (error) => setFormError(errMessage(error)),
@@ -576,18 +610,20 @@ export default function StoryPanel({ projectId, defaultTopic }: { projectId: str
             {story && musicMode !== "none" && (
               <Stack spacing={1} alignItems="flex-start">
                 <Button variant="outlined" disabled={planning || musicBusy} onClick={() => generateMusic.mutate()}>
-                  {musicBusy ? "Writing music…" : audioSrc ? "Regenerate music" : "Generate music"}
+                  {musicBusy ? "Generating music…" : audioSrc ? "Regenerate music" : "Generate music"}
                 </Button>
+                <StageProgress
+                  job={musicJob}
+                  pending={generateMusic.isPending}
+                  pinTitle
+                  title="Generating music"
+                  detail="ACE-Step writes one track for the whole video."
+                  unknownTimeNote="Time left appears if ACE-Step reports a percent. Until then this shows how long it has been writing."
+                />
                 <Typography variant="caption" color="text.secondary">
                   ACE-Step writes one full track for the whole video, following every scene. Horror background stays
                   instrumental. Kids stories and Full song sing the original lyrics from start to finish.
                 </Typography>
-                <StageProgress
-                  job={musicJob}
-                  title="Writing the music"
-                  detail="ACE-Step writes one track for the whole video."
-                  unknownTimeNote="Time left appears if ACE-Step reports a percent. Until then this shows how long it has been writing."
-                />
                 {musicJob?.status === "failed" && musicJob.error && <Alert severity="error">{musicJob.error}</Alert>}
                 {audioSrc && <audio controls src={audioSrc} />}
               </Stack>
@@ -604,18 +640,24 @@ export default function StoryPanel({ projectId, defaultTopic }: { projectId: str
                   disabled={planning || imageBusy}
                   onClick={() => generateImages.mutate(redrawExisting)}
                 >
-                  {imageBusy ? "Drawing scenes…" : redrawExisting ? "Regenerate scene images" : "Generate scene images"}
+                  {imageBusy
+                    ? "Generating scene images…"
+                    : redrawExisting
+                      ? "Regenerate scene images"
+                      : "Generate scene images"}
                 </Button>
+                <StageProgress
+                  job={imageJob}
+                  pending={generateImages.isPending}
+                  pinTitle
+                  title="Generating scene images"
+                  detail="ComfyUI draws one scene at a time."
+                  unknownTimeNote="Time left appears after the first scene, or the first ComfyUI step, moves the percent."
+                />
                 <Typography variant="caption" color="text.secondary">
                   ComfyUI on port 8188 draws each scene with Qwen-Image-2.1. Slides that already have a picture are
                   kept until you regenerate. The image-generation queue must be on the non-render Celery worker.
                 </Typography>
-                <StageProgress
-                  job={imageJob}
-                  title="Drawing scene images"
-                  detail="ComfyUI draws one scene at a time."
-                  unknownTimeNote="Time left appears after the first scene, or the first ComfyUI step, moves the percent."
-                />
                 {imageJob?.status === "failed" && imageJob.error && <Alert severity="error">{imageJob.error}</Alert>}
               </Stack>
             )}

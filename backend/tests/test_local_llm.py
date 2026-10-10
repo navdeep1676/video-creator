@@ -4,7 +4,13 @@ import httpx
 import pytest
 
 from app.config import Settings
-from app.services.local_llm import LocalLLMProvider, configured_local_model, is_local_model, local_catalog_rows
+from app.services.local_llm import (
+    LocalLLMProvider,
+    configured_local_model,
+    is_local_model,
+    local_catalog_rows,
+    should_manage_ollama,
+)
 from app.services.openrouter_llm import ProviderUnavailable
 from app.services.story_job import build_llm_provider
 
@@ -17,12 +23,26 @@ def _settings() -> Settings:
     )
 
 
+def test_manage_ollama_only_for_a_local_qwen_story():
+    settings = _settings()
+    assert should_manage_ollama(settings, "local/qwen3:8b", injected_provider=False) is True
+    assert should_manage_ollama(settings, "local/qwen3:8b", injected_provider=True) is False
+    assert should_manage_ollama(settings, "google/gemini-3.5-flash", injected_provider=False) is False
+    settings.ollama_manage_process = False
+    assert should_manage_ollama(settings, "local/qwen3:8b", injected_provider=False) is False
+    remote = _settings()
+    remote.local_llm_base_url = "http://127.0.0.1:1234/v1"
+    assert should_manage_ollama(remote, "local/qwen3:8b", injected_provider=False) is False
+
+
 def test_local_model_parses_json_and_unloads_ollama():
     def handler(request: httpx.Request) -> httpx.Response:
         assert "authorization" not in {key.lower() for key in request.headers}
         body = json.loads(request.content.decode())
         assert body["model"] == "qwen2.5:7b"
         assert body["keep_alive"] == 0
+        assert body["think"] is False
+        assert body["max_tokens"] == 12288
         assert body["response_format"]["type"] == "json_schema"
         return httpx.Response(200, json={"choices": [{"message": {"content": '{"title": "ok"}'}}]})
 
@@ -48,6 +68,15 @@ def test_local_schema_rejection_retries_without_temperature():
     }
     assert calls[1]["response_format"]["type"] == "json_object"
     assert "keep_alive" in calls[1]
+
+
+def test_read_timeout_says_the_model_is_still_writing():
+    def handler(_request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("timed out")
+
+    provider = LocalLLMProvider(_settings(), client=httpx.Client(transport=httpx.MockTransport(handler)))
+    with pytest.raises(ProviderUnavailable, match="still being written"):
+        provider.complete_json(system="sys", user="write", schema={}, schema_name="story_plan")
 
 
 def test_stopped_local_server_is_a_clear_error():

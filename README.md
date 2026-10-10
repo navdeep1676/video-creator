@@ -14,7 +14,7 @@
 - Background FFmpeg render (fade + concat timeline, subtitles, optional BGM)
 - Download MP4 + signed media URLs for preview
 - Original horror and kids stories from a local OpenAI-compatible model, OpenRouter, Gemini, or OpenAI (`POST /api/v1/projects/{id}/story`). Local models use `LOCAL_LLM_BASE_URL` (Ollama on port 11434, or LM Studio). Cloud models need `OPENROUTER_API_KEY`, `GEMINI_API_KEY`, or `OPENAI_API_KEY`. Models are listed at `/api/v1/models`.
-- Local ACE-Step 1.5 music (`POST /api/v1/projects/{id}/music/generate`) once a story exists. The ACE-Step server stays on port 8001. `music_mode=none` skips it.
+- Local ACE-Step 1.5 music (`POST /api/v1/projects/{id}/music/generate`) once a story exists. The server starts for that request and exits when the track is saved, so it does not hold the GPU. `music_mode=none` skips it.
 - Local Qwen-Image-2.1 scene stills through ComfyUI (`POST /api/v1/projects/{id}/images/generate`). ComfyUI stays on port 8188.
 
 ## Quick start (Docker — live reload)
@@ -91,13 +91,13 @@ Start one worker so the in-memory queue is not split:
 python -m acestep.api_server --host 127.0.0.1 --port 8001
 ```
 
-Naratto reads `ACESTEP_BASE_URL` (default `http://127.0.0.1:8001`). Open a project, generate a story, then **Generate music**. One track covers the full runtime and follows every scene in order. Horror background sends an instrumental prompt and empty lyrics. Kids stories and full songs send the complete original lyrics and `audio_duration`. A failed ACE-Step task (`status` 2) fails that music job. If the log mentions vLLM on AMD, set `ACESTEP_LM_BACKEND=pt` and restart ACE-Step.
+Naratto reads `ACESTEP_BASE_URL` (default `http://127.0.0.1:8001`). `naratto start` does not launch ACE-Step. Open a project, generate a story, then **Generate music**. That click starts the server, loads the weights for the track, and stops the process when the wav is saved. One track covers the full runtime and follows every scene in order. Horror background sends an instrumental prompt and empty lyrics. Kids stories and full songs send the complete original lyrics and `audio_duration`. A failed ACE-Step task (`status` 2) fails that music job. If the log mentions vLLM on AMD, the music job already sets `ACESTEP_LM_BACKEND=pt`.
 
 Unload ComfyUI before music if it is running. Naratto calls `POST /free` on `COMFYUI_BASE_URL` before the first ACE-Step request. A stopped ComfyUI does not block music.
 
 ### Qwen-Image-2.1 scene images (ComfyUI)
 
-Scene pictures are drawn by ComfyUI on port 8188. Naratto posts the API workflow in `backend/configs/workflows/qwen_image_2_1_t2i.json`. Do not point this at vLLM, and do not put ComfyUI on port 8000. Port 8000 is the Naratto API. Port 8001 is ACE-Step.
+Scene pictures are drawn by ComfyUI on port 8188. **Generate images** starts ComfyUI and stops it when the stills are saved, so it does not hold the GPU. Naratto posts the API workflow in `backend/configs/workflows/qwen_image_2_1_t2i.json`. Do not point this at vLLM, and do not put ComfyUI on port 8000. Port 8000 is the Naratto API. Port 8001 is ACE-Step.
 
 Use a ROCm build of ComfyUI 0.37.0 or newer on the RX 9060 XT. The CUDA portable package cannot drive that GPU. The nodes `UNETLoader`, `CLIPLoader`, `VAELoader`, `TextEncodeQwenImage21`, `EmptyLatentImage`, `KSampler`, `VAEDecode`, and `SaveImage` ship with ComfyUI. A missing node fails that image job and names the class to install.
 
@@ -142,7 +142,7 @@ AI Motion clips are cached under `uploads/{project_id}/i2v_cache/`. Text-to-vide
 
 ## Local development (without full compose)
 
-On this PC, one command starts Postgres on 5433, Redis on 6380, the API, both Celery workers, beat, the Vite app, ComfyUI, and ACE-Step:
+On this PC, one command starts Postgres on 5433, Redis on 6380, the API, both Celery workers, beat, and the Vite app. ComfyUI, Ollama, and ACE-Step are not started. Each one starts for its own Generate click and stops when that job finishes, so it does not hold the GPU.
 
 ```bat
 naratto start
@@ -155,7 +155,7 @@ naratto help
 
 `naratto all` is the same as `naratto start`. `naratto` with no command also starts.
 
-`restart` is the one to use after a Wan or worker code change. It stops the render worker first, so Wan 2.2 leaves the GPU, then starts a new worker. Wan 2.2 TI2V 5B is not its own server. The render worker loads `Wan-AI/Wan2.2-TI2V-5B-Diffusers` on export and unloads it when the render ends. The command does not preload those weights, because ComfyUI and ACE-Step are started too. To keep Wan loaded and leave the other GPU servers off, run `naratto preload`.
+`restart` is the one to use after a Wan or worker code change. It stops the render worker first, so Wan 2.2 leaves the GPU, then starts a new worker. Wan 2.2 TI2V 5B is not its own server. The render worker loads `Wan-AI/Wan2.2-TI2V-5B-Diffusers` on export and unloads it when the render ends. The command does not preload those weights, because ComfyUI is started too. To keep Wan loaded and leave ComfyUI off, run `naratto preload`.
 
 Logs are under `backend\data\run\`. Postgres and Redis containers stay up after `stop`.
 
@@ -197,13 +197,13 @@ Vite proxies `/api` to `http://localhost:8000`.
 
 ### Local story model
 
-Install [Ollama](https://ollama.com) and pull a Qwen3 instruct model that fits the GPU:
+Install [Ollama](https://ollama.com) and pull a Qwen instruct model that fits the GPU:
 
 ```bash
-ollama pull qwen3:8b
+ollama pull qwen2.5:7b
 ```
 
-Set `LOCAL_LLM_MODEL=local/qwen3:8b` in `.env`. That id becomes the story default and shows under Local in the Model menu. Ollama listens on `http://127.0.0.1:11434/v1`. The worker unloads the model after each story so ComfyUI, ACE-Step, or Wan can use the GPU. LM Studio on port 1234 works too: point `LOCAL_LLM_BASE_URL` at `http://127.0.0.1:1234/v1` and set `LOCAL_LLM_MODEL` to a loaded model id.
+Set `LOCAL_LLM_MODEL=local/qwen2.5:7b` in `.env`. That id becomes the story default and shows under Local in the Model menu. A local story starts Ollama if it is not already listening on `http://127.0.0.1:11434/v1`, then unloads Qwen and stops its runner when the story ends. LM Studio on port 1234 is left running: point `LOCAL_LLM_BASE_URL` at `http://127.0.0.1:1234/v1` and set `LOCAL_LLM_MODEL` to a loaded model id.
 
 ## Architecture
 

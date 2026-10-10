@@ -14,8 +14,11 @@ from app.db.session import SessionLocal
 from app.services.ace_step import (
     AceStepMusicProvider,
     ace_step_percent,
+    ensure_acestep_server,
     generate_music_bytes,
     mark_music_failed,
+    should_manage_acestep,
+    stop_acestep_server,
 )
 from app.services.stage_job import begin_stage_job, report_progress
 from app.services.storage import get_storage
@@ -59,6 +62,14 @@ def execute_music_job(
             session.commit()
             return
         active = build_music_provider(settings, provider)
+        manage_gpu = should_manage_acestep(
+            settings,
+            dict(job.payload or {}),
+            injected_provider=provider is not None,
+        )
+        if manage_gpu:
+            report_progress(session, job, 0, "Starting ACE-Step")
+            ensure_acestep_server(settings)
         seen: dict[str, int | None] = {"percent": -1}
 
         def on_tick(item: dict) -> None:
@@ -92,6 +103,11 @@ def execute_music_job(
             mark_music_failed(failed, exc)
             session.commit()
     finally:
+        if "manage_gpu" in locals() and manage_gpu:
+            try:
+                stop_acestep_server()
+            except Exception:
+                logger.exception("[MUSIC] ACE-Step did not stop")
         session.close()
 
 

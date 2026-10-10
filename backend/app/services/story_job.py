@@ -14,7 +14,13 @@ from app.config import Settings, get_settings
 from app.db.models import Project, Story, StoryCharacter, StoryJob, StoryLocation, StoryScene
 from app.db.session import SessionLocal
 from app.services.gemini_llm import GeminiLLMProvider, is_gemini_model
-from app.services.local_llm import LocalLLMProvider, is_local_model
+from app.services.local_llm import (
+    LocalLLMProvider,
+    ensure_ollama_server,
+    is_local_model,
+    release_ollama_model,
+    should_manage_ollama,
+)
 from app.services.openai_llm import OpenAILLMProvider, is_openai_model
 from app.services.openrouter_llm import LLMProvider, OpenRouterLLMProvider
 from app.services.stage_job import begin_stage_job, report_progress
@@ -58,10 +64,12 @@ def execute_story_job(
             job.error = "Project not found"
             session.commit()
             return
-        active = provider or build_llm_provider(
-            settings,
-            str(job.payload.get("llm_model") or settings.openrouter_model),
-        )
+        model = str(job.payload.get("llm_model") or settings.openrouter_model)
+        active = provider or build_llm_provider(settings, model)
+        manage_gpu = should_manage_ollama(settings, model, injected_provider=provider is not None)
+        if manage_gpu:
+            report_progress(session, job, 0, "Starting Qwen")
+            ensure_ollama_server(settings)
         report_progress(session, job, 0, "The model is writing the story")
         plan = plan_story(SimpleNamespace(**job.payload), active, settings)
         report_progress(session, job, 90, "Saving the story and scenes")
@@ -81,6 +89,11 @@ def execute_story_job(
             failed.error = str(exc)
             session.commit()
     finally:
+        if "manage_gpu" in locals() and manage_gpu:
+            try:
+                release_ollama_model(settings, model)
+            except Exception:
+                logger.exception("[STORY] Qwen did not unload")
         session.close()
 
 
