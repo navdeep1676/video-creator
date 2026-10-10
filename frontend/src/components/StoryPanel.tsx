@@ -130,6 +130,7 @@ export default function StoryPanel({ projectId, defaultTopic }: { projectId: str
   const [formError, setFormError] = useState("");
   const [reviewOpen, setReviewOpen] = useState(false);
   const modelTouched = useRef(false);
+  const formTouched = useRef(false);
 
   const modelsQuery = useQuery({
     queryKey: ["story-models"],
@@ -159,6 +160,7 @@ export default function StoryPanel({ projectId, defaultTopic }: { projectId: str
   });
 
   useEffect(() => {
+    if (formTouched.current) return;
     const saved = storyQuery.data?.settings;
     if (!saved) return;
     if (saved.content_type) setContentType(saved.content_type);
@@ -194,7 +196,13 @@ export default function StoryPanel({ projectId, defaultTopic }: { projectId: str
     setSchemaOpen(true);
   };
 
+  const choose = (setter: (value: string) => void) => (event: { target: { value: string } }) => {
+    formTouched.current = true;
+    setter(event.target.value);
+  };
+
   const loadStoryFile = async (file: File) => {
+    formTouched.current = true;
     const plan = await readStoryFile(file);
     setStoryJson(JSON.stringify(plan, null, 2));
     setStoryFileName(file.name);
@@ -391,8 +399,8 @@ export default function StoryPanel({ projectId, defaultTopic }: { projectId: str
               </Stack>
             )}
             <Typography variant="body2" color="text.secondary">
-              OpenRouter, Gemini, OpenAI, or a local model writes an original horror story or kids song, then splits it
-              into scenes. Wan clips stay inside about a quarter of the runtime.
+              The model writes an original story from the type, length, language, style, and music selected here, then
+              splits it into scenes. Wan clips stay inside about a quarter of the runtime.
             </Typography>
             {missingOpenRouterKey && (
               <Alert severity="warning">Add OPENROUTER_API_KEY to the environment before generating a story.</Alert>
@@ -416,24 +424,32 @@ export default function StoryPanel({ projectId, defaultTopic }: { projectId: str
             )}
             {job?.status === "failed" && job.error && <Alert severity="error">{job.error}</Alert>}
             <Stack direction={{ xs: "column", md: "row" }} spacing={1.5}>
-              <TextField select label="Type" value={contentType} onChange={(e) => setContentType(e.target.value)} fullWidth>
+              <TextField select label="Type" value={contentType} onChange={choose(setContentType)} fullWidth>
                 <MenuItem value="horror">Horror</MenuItem>
                 <MenuItem value="kids">Kids</MenuItem>
               </TextField>
-              <TextField select label="Length" value={duration} onChange={(e) => setDuration(e.target.value)} fullWidth>
+              <TextField select label="Length" value={duration} onChange={choose(setDuration)} fullWidth>
                 {DURATIONS.map((seconds) => (
                   <MenuItem key={seconds} value={String(seconds)}>
                     {seconds}s
                   </MenuItem>
                 ))}
               </TextField>
-              <TextField select label="Language" value={language} onChange={(e) => setLanguage(e.target.value)} fullWidth>
+              <TextField select label="Language" value={language} onChange={choose(setLanguage)} fullWidth>
                 <MenuItem value="en">English</MenuItem>
                 <MenuItem value="hi">Hindi</MenuItem>
                 <MenuItem value="hinglish">Hinglish</MenuItem>
               </TextField>
             </Stack>
-            <TextField label="Topic" value={topic} onChange={(e) => setTopic(e.target.value)} fullWidth multiline minRows={2} />
+            <TextField
+              label="Topic"
+              value={topic}
+              onChange={choose(setTopic)}
+              fullWidth
+              multiline
+              minRows={2}
+              maxRows={4}
+            />
             <Stack spacing={1}>
               <Stack direction="row" spacing={1} alignItems="center">
                 <Button size="small" variant="text" onClick={() => void showSchema().catch((error) => setFormError(errMessage(error)))}>
@@ -461,7 +477,7 @@ export default function StoryPanel({ projectId, defaultTopic }: { projectId: str
                 multiline
                 minRows={4}
                 placeholder='{"title": "...", "hook": "...", "story": "...", "characters": [], "locations": [], "scenes": []}'
-                helperText="Optional. Choose Add story JSON, or paste a story object here. Type, length, and style above still apply."
+                helperText="Optional. Choose Add story JSON, or paste a story object here. Type, length, language, style, and music above still apply."
                 InputProps={{ sx: { fontFamily: "monospace", fontSize: 13 } }}
               />
             </Stack>
@@ -470,7 +486,7 @@ export default function StoryPanel({ projectId, defaultTopic }: { projectId: str
                 select
                 label="Style"
                 value={visualStyle}
-                onChange={(e) => setVisualStyle(e.target.value)}
+                onChange={choose(setVisualStyle)}
                 fullWidth
               >
                 {["Dark Horror", "Cinematic", "3D Cartoon", "2D Cartoon", "Kids Animation", "Anime"].map((style) => (
@@ -479,7 +495,7 @@ export default function StoryPanel({ projectId, defaultTopic }: { projectId: str
                   </MenuItem>
                 ))}
               </TextField>
-              <TextField select label="Music" value={musicMode} onChange={(e) => setMusicMode(e.target.value)} fullWidth>
+              <TextField select label="Music" value={musicMode} onChange={choose(setMusicMode)} fullWidth>
                 <MenuItem value="background">Background</MenuItem>
                 <MenuItem value="full_song">Full song</MenuItem>
                 <MenuItem value="none">None</MenuItem>

@@ -495,6 +495,8 @@ def _save_direct_story(db: Session, project: Project, body: StoryRequest) -> dic
             content_type=body.content_type,
             duration_seconds=body.duration_seconds,
             settings=settings,
+            visual_style=body.visual_style,
+            music_mode=body.music_mode,
         )
     except PlanError as exc:
         raise AppError("VALIDATION", str(exc), 400) from exc

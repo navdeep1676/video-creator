@@ -8,7 +8,10 @@ from app.config import Settings
 from app.services.openrouter_llm import OpenRouterLLMProvider, ProviderUnavailable
 from app.services.story_planner import HORROR_BEATS, PlanError, auto_scene_count, import_plan, plan_story, video_seconds
 
-NARRATION = "lantern flickers beside the gate"
+NARRATION = (
+    "The lantern flickers beside the old gate and follows Mira slowly down the wet lane "
+    "while the quiet night stays close behind her"
+)
 MOTION = "the child walks to the door"
 
 
@@ -89,10 +92,11 @@ def horror_payload(count=10):
 
 
 def kids_payload(count=4, lyrics="Verse:\nPaper boats sail on Tuesday puddles\nChorus:\nWe made this song today"):
-    scenes = [
-        _scene(index, "verse", narration=f"count the puddles number {index} with Mira today")
-        for index in range(count)
-    ]
+    spoken = (
+        "Mira counts puddle number {index} and sings a brand new sunny song "
+        "while she walks the lane in red boots today"
+    )
+    scenes = [_scene(index, "verse", narration=spoken.format(index=index)) for index in range(count)]
     return {
         "title": "Tuesday puddles",
         "hook": "A new song about counting puddles.",
@@ -152,12 +156,13 @@ def test_import_plan_reports_missing_fields():
 def test_each_scene_gets_its_own_music_prompt():
     provider = ScriptedProvider([horror_payload()])
     plan = plan_story(_project(), provider, _settings())
-    assert plan.music_prompt == "low strings, slow tempo, uneasy"
+    assert plan.music_prompt.startswith("low strings, slow tempo, uneasy")
+    assert "instrumental" in plan.music_prompt
     for scene in plan.scenes:
         assert scene.music_prompt.strip()
         assert "low strings, slow tempo, uneasy" in scene.music_prompt
         assert scene.beat in scene.music_prompt
-        assert scene.narration in scene.music_prompt
+        assert " ".join(scene.narration.split())[:120] in scene.music_prompt
 
 
 def test_horror_plan_has_beats_and_chain():
@@ -225,6 +230,74 @@ def test_video_budget_for_140_seconds():
     assert [scene.generation_mode for scene in plan.scenes].count("video") == 2
     assert plan.scenes[1].generation_mode == "video"
     assert plan.scenes[2].generation_mode == "video"
+
+
+def test_prompt_uses_type_length_language_style_and_music():
+    provider = ScriptedProvider([horror_payload()])
+    plan_story(
+        _project(language="en", visual_style="Anime", duration_seconds=140, music_mode="background"),
+        provider,
+        _settings(),
+    )
+    prompt = provider.calls[0]
+    assert "Type: horror." in prompt
+    assert "Language: English." in prompt
+    assert 'Visual style: Anime.' in prompt
+    assert "Length: 140 seconds." in prompt
+    assert "Music: background." in prompt
+    assert "instrumental" in prompt
+
+
+def test_hindi_story_retries_when_the_model_writes_english():
+    hindi = horror_payload()
+    line = (
+        "लालटेन पुराने फाटक के पास टिमटिमाती है और मीरा के पीछे भीगी गली में चलती रहती है "
+        "जबकि रात चुपचाप उसके पास रहती है"
+    )
+    hindi["title"] = "लालटेन"
+    hindi["hook"] = "रोशनी उसका नाम जानती थी और रात में उसके पीछे चली।"
+    hindi["story"] = "मीरा घर की ओर चली और लालटेन पीछे पीछे आई। रात शांत थी लेकिन रोशनी रुकती नहीं थी।"
+    for scene in hindi["scenes"]:
+        scene["narration"] = line
+    provider = ScriptedProvider([horror_payload(), hindi])
+    plan = plan_story(_project(language="hi"), provider, _settings())
+    assert len(provider.calls) == 2
+    assert "Devanagari" in provider.calls[1]
+    assert "लालटेन" in plan.scenes[0].narration
+
+
+def test_short_story_retries_until_it_fills_the_length():
+    short = horror_payload()
+    for scene in short["scenes"]:
+        scene["narration"] = "too short"
+    provider = ScriptedProvider([short, horror_payload()])
+    plan = plan_story(_project(duration_seconds=140), provider, _settings())
+    assert len(provider.calls) == 2
+    assert "Spoken narration is" in provider.calls[1]
+    assert plan.scenes[-1].end_time == 140
+
+
+def test_visual_style_is_written_into_the_pictures():
+    plan = plan_story(_project(visual_style="Anime"), ScriptedProvider([horror_payload()]), _settings())
+    assert all("Anime" in scene.image_prompt for scene in plan.scenes)
+    assert all("Anime" in character.visual_style for character in plan.characters)
+
+
+def test_music_none_clears_the_score():
+    plan = plan_story(_project(music_mode="none"), ScriptedProvider([horror_payload()]), _settings())
+    assert plan.music_prompt == ""
+    assert all(scene.music_prompt == "" for scene in plan.scenes)
+
+
+def test_full_song_retries_without_lyrics():
+    sung = horror_payload()
+    sung["lyrics"] = "Verse:\nThe lantern knew her name\nChorus:\nFollow the light tonight"
+    provider = ScriptedProvider([horror_payload(), sung])
+    plan = plan_story(_project(music_mode="full_song"), provider, _settings())
+    assert len(provider.calls) == 2
+    assert "Full song needs original lyrics" in provider.calls[1]
+    assert "sung vocals" in plan.music_prompt
+    assert plan.lyrics
 
 
 def test_invalid_json_retries_once():

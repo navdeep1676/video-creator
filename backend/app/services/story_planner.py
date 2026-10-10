@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError
@@ -27,6 +28,13 @@ MOTION_WORDS = (
     "interact",
 )
 SFX_KEYS = ("door_open", "footsteps", "knock", "heartbeat", "whisper", "bird", "boing", "laugh")
+LANGUAGE_NAMES = {
+    "en": "English",
+    "hi": "Hindi written in Devanagari",
+    "hinglish": "Hinglish, Hindi in Devanagari mixed with English words",
+}
+_DEVANAGARI = re.compile(r"[\u0900-\u097F]")
+_LATIN_WORD = re.compile(r"[A-Za-z]{2,}")
 
 SYSTEM_PROMPT = """You write original stories for short videos.
 Do not quote or closely paraphrase copyrighted plots or song lyrics.
@@ -120,10 +128,18 @@ def target_scene_count(duration_seconds: int, scene_count: str) -> int:
     return int(scene_count)
 
 
-def import_plan(raw: dict, *, content_type: str, duration_seconds: int, settings: Settings) -> StoryPlan:
+def import_plan(
+    raw: dict,
+    *,
+    content_type: str,
+    duration_seconds: int,
+    settings: Settings,
+    visual_style: str = "",
+    music_mode: str = "background",
+) -> StoryPlan:
     """Validate a pasted story object and fit it to the project length.
 
-    Scene count stays as pasted. Timing and video budget still follow the project.
+    Scene count stays as pasted. Timing, picture style, and music mode follow the project.
     """
     if not isinstance(raw, dict):
         raise PlanError("Story JSON must be an object")
@@ -143,7 +159,7 @@ def import_plan(raw: dict, *, content_type: str, duration_seconds: int, settings
         content_type=content_type,
         settings=settings,
     )
-    ensure_scene_music(plan.scenes, plan.music_prompt, content_type)
+    apply_generation_settings(plan, visual_style=visual_style, music_mode=music_mode, content_type=content_type)
     return plan
 
 
@@ -164,6 +180,9 @@ def plan_story(project: Any, provider: LLMProvider, settings: Settings) -> Story
         try:
             plan = StoryPlan.model_validate(raw)
             _reject_bad_plan(plan, project.content_type)
+            mismatch = _settings_problem(plan, project)
+            if mismatch:
+                raise PlanError(mismatch)
             plan.scenes = prepare_scenes(
                 plan.scenes,
                 duration=project.duration_seconds,
@@ -171,7 +190,12 @@ def plan_story(project: Any, provider: LLMProvider, settings: Settings) -> Story
                 content_type=project.content_type,
                 settings=settings,
             )
-            ensure_scene_music(plan.scenes, plan.music_prompt, project.content_type)
+            apply_generation_settings(
+                plan,
+                visual_style=str(getattr(project, "visual_style", "") or ""),
+                music_mode=str(getattr(project, "music_mode", "background") or "background"),
+                content_type=project.content_type,
+            )
             return plan
         except (ValidationError, PlanError) as exc:
             last_error = str(exc)
@@ -218,28 +242,213 @@ def video_seconds(scenes: list[SceneDraft]) -> float:
     return sum(scene.duration for scene in scenes if scene.generation_mode == "video")
 
 
+def language_label(language: str) -> str:
+    return LANGUAGE_NAMES.get(language, language)
+
+
+def narration_word_bounds(duration_seconds: int, language: str) -> tuple[int, int]:
+    """Spoken-word range that fills the selected length at a natural pace."""
+    rate = 2.0 if language in {"hi", "hinglish"} else 2.3
+    target = max(20, int(round(max(1, duration_seconds) * rate)))
+    low = max(12, int(round(target * 0.6)))
+    high = max(low + 1, int(round(target * 1.5)))
+    return low, high
+
+
 def _user_prompt(project: Any) -> str:
     count = target_scene_count(project.duration_seconds, project.scene_count)
+    language = str(getattr(project, "language", "en") or "en")
+    content_type = str(getattr(project, "content_type", "horror") or "horror")
+    visual_style = str(getattr(project, "visual_style", "") or "").strip() or "Cinematic"
+    music_mode = str(getattr(project, "music_mode", "background") or "background")
+    duration = int(project.duration_seconds)
+    low, high = narration_word_bounds(duration, language)
     return "\n".join(
         [
-            f"Content type: {project.content_type}",
+            "Follow every setting below. The story, the pictures, and the music must match them.",
+            f"Type: {content_type}.",
+            _type_instruction(content_type),
             f"Topic: {project.topic}",
-            f"Language: {project.language}",
-            f"Visual style: {project.visual_style}",
-            f"Duration seconds: {project.duration_seconds}",
-            f"Scene count: {count}",
-            f"Music mode: {project.music_mode}",
-            "Write an original story. Do not copy an existing video or song.",
-            "Give every scene its own music_prompt. Describe instruments, tempo, and mood for that scene only.",
-            f"Return exactly {count} scenes.",
+            f"Language: {language_label(language)}.",
+            _language_instruction(language),
+            f"Visual style: {visual_style}.",
+            f'Every image_prompt and every character visual_style must include "{visual_style}".',
+            "Image prompts and video prompts stay in English.",
+            f"Length: {duration} seconds.",
             (
-                "Include original lyrics with verse and chorus labels. kids_format is one of: "
-                + ", ".join(KIDS_FORMATS)
-                if project.content_type == "kids"
-                else "Include every horror beat in order: " + ", ".join(HORROR_BEATS)
+                f"Write between {low} and {high} words of spoken narration across all scenes "
+                f"so the story fills {duration} seconds."
             ),
+            f"Scene count: {count}. Return exactly {count} scenes.",
+            f"Music: {music_mode}.",
+            _music_instruction(music_mode, language, content_type),
+            "Write an original story. Do not copy an existing video or song.",
+            "Each scene continues the previous scene.",
         ]
     )
+
+
+def _type_instruction(content_type: str) -> str:
+    if content_type == "kids":
+        return (
+            "This is a kids story. Include original lyrics with verse and chorus labels. kids_format is one of: "
+            + ", ".join(KIDS_FORMATS)
+            + "."
+        )
+    return "This is a horror story. Include every horror beat in order: " + ", ".join(HORROR_BEATS) + "."
+
+
+def _language_instruction(language: str) -> str:
+    if language == "hi":
+        return (
+            "Write the title, hook, story, narration, dialogue, and any lyrics in Hindi using Devanagari. "
+            "Do not write those fields in English."
+        )
+    if language == "hinglish":
+        return (
+            "Write the title, hook, story, narration, dialogue, and any lyrics in Hinglish: "
+            "Hindi in Devanagari mixed with English words."
+        )
+    return "Write the title, hook, story, narration, and dialogue in English only."
+
+
+def _music_instruction(music_mode: str, language: str, content_type: str) -> str:
+    if music_mode == "none":
+        return "Set music_prompt to an empty string and set every scene music_prompt to an empty string."
+    if music_mode == "full_song" or content_type == "kids":
+        return (
+            "Include original lyrics in "
+            f"{language_label(language)} with verse and chorus labels. "
+            "music_prompt and each scene music_prompt describe instruments, tempo, mood, and sung vocals. "
+            "Do not name an existing song."
+        )
+    return (
+        "music_prompt and each scene music_prompt describe an instrumental background score only: "
+        "instruments, tempo, and mood. Say that it is instrumental with no vocals. "
+        "Do not name an existing song."
+    )
+
+
+def _settings_problem(plan: StoryPlan, project: Any) -> str | None:
+    language = str(getattr(project, "language", "en") or "en")
+    music_mode = str(getattr(project, "music_mode", "background") or "background")
+    language_problem = _language_problem(plan, language)
+    if language_problem:
+        return language_problem
+    length_problem = _length_problem(plan, int(project.duration_seconds), language)
+    if length_problem:
+        return length_problem
+    if music_mode == "full_song" and not (plan.lyrics or "").strip():
+        return (
+            "Full song needs original lyrics with verse and chorus labels in "
+            f"{language_label(language)}."
+        )
+    return None
+
+
+def _language_problem(plan: StoryPlan, language: str) -> str | None:
+    devanagari, latin = _script_counts(_spoken_blob(plan))
+    if language == "hi" and (devanagari < 40 or (latin > 12 and latin > devanagari / 3)):
+        return "Write the title, hook, story, narration, dialogue, and lyrics in Hindi using Devanagari."
+    if language == "hinglish" and (devanagari < 20 or latin < 4):
+        return "Write Hinglish: Hindi in Devanagari mixed with English words."
+    if language == "en" and devanagari > 30 and devanagari > latin * 2:
+        return "Write the title, hook, story, narration, and dialogue in English."
+    return None
+
+
+def _length_problem(plan: StoryPlan, duration_seconds: int, language: str) -> str | None:
+    low, high = narration_word_bounds(duration_seconds, language)
+    count = _spoken_words(plan)
+    if low <= count <= high:
+        return None
+    return (
+        f"Spoken narration is {count} words. Write between {low} and {high} words "
+        f"so the story fills {duration_seconds} seconds."
+    )
+
+
+def _spoken_blob(plan: StoryPlan) -> str:
+    parts = [plan.title, plan.hook, plan.story, plan.lyrics or ""]
+    for scene in plan.scenes:
+        parts.append(scene.narration)
+        parts.append(scene.dialogue)
+    return "\n".join(parts)
+
+
+def _script_counts(text: str) -> tuple[int, int]:
+    return len(_DEVANAGARI.findall(text)), len(_LATIN_WORD.findall(text))
+
+
+def _spoken_words(plan: StoryPlan) -> int:
+    total = 0
+    for scene in plan.scenes:
+        narration = scene.narration.strip()
+        dialogue = scene.dialogue.strip()
+        total += len(narration.split())
+        if dialogue and dialogue not in narration:
+            total += len(dialogue.split())
+    return total
+
+
+def apply_generation_settings(
+    plan: StoryPlan,
+    *,
+    visual_style: str,
+    music_mode: str,
+    content_type: str,
+) -> None:
+    _apply_visual_style(plan, visual_style)
+    if music_mode == "none":
+        plan.music_prompt = ""
+        for scene in plan.scenes:
+            scene.music_prompt = ""
+        return
+    _shape_music(plan, music_mode, content_type)
+    ensure_scene_music(plan.scenes, plan.music_prompt, content_type)
+
+
+def _apply_visual_style(plan: StoryPlan, visual_style: str) -> None:
+    style = visual_style.strip()
+    if not style:
+        return
+    needle = style.lower()
+    for character in plan.characters:
+        current = (character.visual_style or "").strip()
+        if needle not in current.lower():
+            character.visual_style = f"{style}, {current}".strip(", ")
+    for scene in plan.scenes:
+        prompt = scene.image_prompt.strip()
+        if needle not in prompt.lower():
+            scene.image_prompt = f"{style} style. {prompt}".strip()
+
+
+def _shape_music(plan: StoryPlan, music_mode: str, content_type: str) -> None:
+    plan.music_prompt = _score_line(plan.music_prompt, music_mode, content_type)
+    for scene in plan.scenes:
+        if scene.music_prompt.strip():
+            scene.music_prompt = _score_line(scene.music_prompt, music_mode, content_type)
+
+
+def _score_line(text: str, music_mode: str, content_type: str) -> str:
+    score = text.strip()
+    if not score:
+        score = _default_score(content_type)
+    lowered = score.lower()
+    sung = music_mode == "full_song" or content_type == "kids"
+    if sung:
+        if "vocal" not in lowered and "sing" not in lowered:
+            return f"{score}, sung vocals"
+        return score
+    if "instrumental" not in lowered and "no vocal" not in lowered:
+        return f"{score}, instrumental, no vocals"
+    return score
+
+
+def _default_score(content_type: str) -> str:
+    if content_type == "kids":
+        return "gentle original children's music, acoustic guitar, soft tempo"
+    return "dark ambient score, low drones, dissonant strings"
 
 
 def _reject_bad_plan(plan: StoryPlan, content_type: str) -> None:
