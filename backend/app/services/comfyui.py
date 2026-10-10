@@ -213,10 +213,10 @@ class ComfyUIImageProvider:
             )
         self._nodes_checked = True
 
-    def generate(self, graph: dict) -> bytes:
+    def generate(self, graph: dict, on_step=None) -> bytes:
         self.ensure_nodes()
         prompt_id = self.submit(graph)
-        images = self.wait(prompt_id)
+        images = self.wait(prompt_id, on_step=on_step)
         if not images:
             raise ImageGenerationError("ComfyUI finished without an image")
         return self.download(images[0])
@@ -237,7 +237,7 @@ class ComfyUIImageProvider:
             raise ImageGenerationError("ComfyUI did not return a prompt_id")
         return str(prompt_id)
 
-    def wait(self, prompt_id: str) -> list[dict]:
+    def wait(self, prompt_id: str, on_step=None) -> list[dict]:
         deadline = time.monotonic() + float(self.settings.comfyui_timeout_s)
         while time.monotonic() < deadline:
             payload = self._get(f"/history/{prompt_id}")
@@ -249,8 +249,35 @@ class ComfyUIImageProvider:
                 images = _history_images(entry)
                 if images or status == "success":
                     return images
+            if on_step:
+                sample = self._sample_progress(prompt_id)
+                if sample is not None:
+                    on_step(*sample)
             self._sleep(self.settings.comfyui_poll_s)
         raise ImageGenerationError(f"ComfyUI prompt {prompt_id} timed out")
+
+    def _sample_progress(self, prompt_id: str) -> tuple[int, int] | None:
+        """ComfyUI /progress is optional. A missing route must not fail the image."""
+        try:
+            state = self._get("/progress")
+        except Exception:
+            return None
+        if not isinstance(state, dict):
+            return None
+        nested = state.get("progress")
+        if "max" not in state and isinstance(nested, dict):
+            state = nested
+        owner = str(state.get("prompt_id") or "")
+        if owner and owner != prompt_id:
+            return None
+        try:
+            value = int(state.get("value") or 0)
+            maximum = int(state.get("max") or 0)
+        except (TypeError, ValueError):
+            return None
+        if maximum <= 0:
+            return None
+        return value, maximum
 
     def download(self, image: dict) -> bytes:
         filename = str(image.get("filename") or "")

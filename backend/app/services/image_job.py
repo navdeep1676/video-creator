@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import inspect
 import logging
 import uuid
 import zlib
+from collections.abc import Callable
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -21,7 +23,7 @@ from app.services.comfyui import (
 )
 from app.services.openrouter_llm import ProviderUnavailable
 from app.services.image_fit import fit_image_to_aspect
-from app.services.stage_job import begin_stage_job
+from app.services.stage_job import begin_stage_job, report_progress
 from app.services.storage import get_storage
 
 logger = logging.getLogger(__name__)
@@ -46,12 +48,17 @@ def execute_image_job(
             return
         force = bool((job.payload or {}).get("force"))
         active = provider or ComfyUIImageProvider(settings)
-        errors = _draw_project(session, project, settings, active, force)
+        def on_progress(percent: int, detail: str) -> None:
+            report_progress(session, job, percent, detail)
+
+        errors = _draw_project(session, project, settings, active, force, on_progress=on_progress)
         active.unload()
         if errors:
             _fail(job, "; ".join(errors))
         else:
             job.status = "succeeded"
+            job.progress = 100
+            job.detail = "Scene images are ready"
             job.error = None
         session.commit()
         logger.info("[IMAGE] %s completed", project.id)
@@ -76,6 +83,7 @@ def _draw_project(
     settings: Settings,
     provider: ComfyUIImageProvider,
     force: bool,
+    on_progress: Callable[[int, str], None] | None = None,
 ) -> list[str]:
     slides = list(
         session.scalars(
@@ -103,6 +111,7 @@ def _draw_project(
     errors: list[str] = []
     drew = False
     skipped_existing = 0
+    pending: list[tuple[Slide, str]] = []
     for slide in slides:
         scene = scenes.get(slide.order_index)
         prompt = (scene.image_prompt if scene is not None else "") or ""
@@ -112,7 +121,34 @@ def _draw_project(
         if slide.all_image_keys() and not force:
             skipped_existing += 1
             continue
+        pending.append((slide, prompt))
+    total = len(pending)
+    published = {"percent": -1, "detail": ""}
+
+    def publish(percent: int, detail: str) -> None:
+        if on_progress is None:
+            return
+        percent = max(0, min(99, int(percent)))
+        if percent == published["percent"] and detail == published["detail"]:
+            return
+        published["percent"] = percent
+        published["detail"] = detail
+        on_progress(percent, detail)
+
+    for index, (slide, prompt) in enumerate(pending):
         drew = True
+        base = int(100 * index / total) if total else 0
+        cap = int(100 * (index + 1) / total) if total else 99
+        order = slide.order_index + 1
+        publish(base, f"Drawing scene {order} · image {index + 1} of {total}")
+
+        def on_step(value: int, maximum: int, base=base, cap=cap, order=order, index=index, total=total) -> None:
+            frac = 0.0 if maximum <= 0 else min(1.0, value / maximum)
+            publish(
+                int(base + (cap - base) * frac),
+                f"Drawing scene {order} · step {value} of {maximum} · image {index + 1} of {total}",
+            )
+
         try:
             graph = build_prompt_graph(
                 settings,
@@ -122,14 +158,15 @@ def _draw_project(
                 height=height,
                 filename_prefix=f"Naratto/{project.id}/{slide.order_index:03d}",
             )
-            raw = provider.generate(graph)
+            raw = _call_generate(provider, graph, on_step)
             _store_slide_image(session, project, slide, raw, preset)
             session.commit()
+            publish(cap, f"Saved scene {order} · {index + 1} of {total}")
         except ProviderUnavailable:
             raise
         except Exception as exc:
             session.rollback()
-            errors.append(f"Slide {slide.order_index + 1}: {exc}")
+            errors.append(f"Slide {order}: {exc}")
             logger.exception("[IMAGE] slide %s failed", slide.id)
     if errors or drew or skipped_existing:
         return errors
@@ -159,6 +196,17 @@ def _store_slide_image(session: Session, project: Project, slide: Slide, raw: by
     slide.image_keys = [{"key": key, "duration_ms": None}]
     session.add(slide)
     session.add(project)
+
+
+def _call_generate(provider: ComfyUIImageProvider, graph: dict, on_step: Callable[[int, int], None]):
+    method = provider.generate
+    try:
+        accepts = "on_step" in inspect.signature(method).parameters
+    except (TypeError, ValueError):
+        accepts = False
+    if accepts:
+        return method(graph, on_step=on_step)
+    return method(graph)
 
 
 def _seed(slide_id: uuid.UUID, prompt: str) -> int:

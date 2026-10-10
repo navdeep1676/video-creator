@@ -16,7 +16,7 @@ from app.db.session import get_db
 from app.dependencies import get_current_user, get_storage_dep
 from app.schemas.common import MusicAssetOut
 from app.services.duration import effective_duration_ms
-from app.services.stage_job import dispatch_stage_task
+from app.services.stage_job import dispatch_stage_task, job_view
 from app.services.story_slides import align_story_slide_durations
 from app.services.storage import LocalStorage
 from app.services.story_job import latest_story_job
@@ -119,14 +119,7 @@ def _scene_cues(db: Session, project_id: UUID, plan: dict) -> list[dict]:
 
 
 def _music_job_out(job: StoryJob) -> dict:
-    return {
-        "id": str(job.id),
-        "project_id": str(job.project_id),
-        "stage": job.stage,
-        "status": job.status,
-        "attempts": job.attempts,
-        "error": job.error,
-    }
+    return job_view(job)
 
 
 @router.post("/projects/{project_id}/music/generate", response_model=None)

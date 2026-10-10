@@ -17,7 +17,7 @@ from app.services.gemini_llm import GeminiLLMProvider, is_gemini_model
 from app.services.local_llm import LocalLLMProvider, is_local_model
 from app.services.openai_llm import OpenAILLMProvider, is_openai_model
 from app.services.openrouter_llm import LLMProvider, OpenRouterLLMProvider
-from app.services.stage_job import begin_stage_job
+from app.services.stage_job import begin_stage_job, report_progress
 from app.services.story_planner import StoryPlan, plan_story, plan_to_json
 from app.services.story_slides import replace_project_slides
 from app.services.storage import get_storage
@@ -62,9 +62,13 @@ def execute_story_job(
             settings,
             str(job.payload.get("llm_model") or settings.openrouter_model),
         )
+        report_progress(session, job, 0, "The model is writing the story")
         plan = plan_story(SimpleNamespace(**job.payload), active, settings)
+        report_progress(session, job, 90, "Saving the story and scenes")
         save_story(session, project, plan)
         job.status = "succeeded"
+        job.progress = 100
+        job.detail = "Story is ready"
         job.error = None
         session.commit()
         logger.info("[STORY] %s completed", project.id)

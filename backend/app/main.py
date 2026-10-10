@@ -47,6 +47,15 @@ async def lifespan(_: FastAPI):
             conn.exec_driver_sql(
                 "ALTER TABLE story_jobs ADD COLUMN IF NOT EXISTS celery_task_id VARCHAR(255)"
             )
+            conn.exec_driver_sql(
+                "ALTER TABLE story_jobs ADD COLUMN IF NOT EXISTS progress INTEGER NOT NULL DEFAULT 0"
+            )
+            conn.exec_driver_sql(
+                "ALTER TABLE story_jobs ADD COLUMN IF NOT EXISTS detail TEXT"
+            )
+            conn.exec_driver_sql(
+                "ALTER TABLE story_jobs ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ"
+            )
     except Exception:
         pass
     yield

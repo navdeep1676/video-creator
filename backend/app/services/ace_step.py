@@ -7,6 +7,7 @@ ACESTEP_OFFLOAD_TO_CPU=true. The default vLLM backend is CUDA-only.
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 import shutil
@@ -68,11 +69,18 @@ def release_body(payload: dict, settings: Settings) -> dict | None:
     }
 
 
-def generate_music_bytes(provider: Any, payload: dict, settings: Settings) -> bytes | None:
+def generate_music_bytes(provider: Any, payload: dict, settings: Settings, on_tick=None) -> bytes | None:
     body = release_body(payload, settings)
     if body is None:
         return None
-    return provider.generate(body)
+    generate = provider.generate
+    try:
+        accepts_tick = "on_tick" in inspect.signature(generate).parameters
+    except (TypeError, ValueError):
+        accepts_tick = False
+    if accepts_tick and on_tick is not None:
+        return generate(body, on_tick=on_tick)
+    return generate(body)
 
 
 def clamp_duration(value: Any) -> int | float:
@@ -87,6 +95,25 @@ def clamp_duration(value: Any) -> int | float:
     if seconds.is_integer():
         return int(seconds)
     return seconds
+
+
+def ace_step_percent(item: dict) -> int | None:
+    """Read a 0–100 percent from an ACE-Step query row, when the server sends one."""
+    if not isinstance(item, dict):
+        return None
+    for key in ("progress", "progress_percent", "percentage"):
+        raw = item.get(key)
+        if raw is None or isinstance(raw, bool):
+            continue
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if 0 <= value <= 1:
+            value *= 100
+        if 0 <= value <= 100:
+            return int(round(value))
+    return None
 
 
 def _status_code(value: Any) -> int:
@@ -231,7 +258,7 @@ class AceStepMusicProvider:
         self._client = client or httpx.Client(timeout=httpx.Timeout(120.0, connect=10.0))
         self._sleep = sleep or time.sleep
 
-    def generate(self, body: dict) -> bytes:
+    def generate(self, body: dict, on_tick=None) -> bytes:
         self.unload_comfyui()
         created = self._send(
             "POST",
@@ -249,6 +276,8 @@ class AceStepMusicProvider:
                 headers=self._headers(),
             )
             item = self._query_item(polled, task_id)
+            if on_tick:
+                on_tick(item)
             status = _status_code(item.get("status"))
             if status == 1:
                 return ensure_wav(self._download(self._file_url(item)))

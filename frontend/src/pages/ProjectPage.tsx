@@ -38,6 +38,7 @@ import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import OpenInNewIcon from "@mui/icons-material/OpenInNew";
 import { api, errMessage, mediaUrl } from "../api/client";
+import JobProgress from "../components/JobProgress";
 import SlideList from "../components/SlideList";
 import PageHeader from "../components/PageHeader";
 import ProjectFormDialog, { type ProjectFormValues } from "../components/ProjectFormDialog";
@@ -606,6 +607,18 @@ export default function ProjectPage() {
   const busyTtsCount = slides.filter((s) =>
     ["queued", "processing"].includes(s.narration?.tts_status || "")
   ).length;
+  const ttsWatch = useRef<{ at: string; ready: number } | null>(null);
+  if (busyTtsCount > 0) {
+    if (!ttsWatch.current) {
+      ttsWatch.current = { at: new Date().toISOString(), ready: readyCount };
+    }
+  } else if (ttsWatch.current) {
+    ttsWatch.current = null;
+  }
+  const voiceBaseline = ttsWatch.current?.ready ?? readyCount;
+  const voiceTodo = Math.max(0, slides.length - voiceBaseline);
+  const voiceGained = Math.max(0, readyCount - voiceBaseline);
+  const voiceProgress = voiceTodo === 0 ? 0 : Math.round((voiceGained / voiceTodo) * 100);
   const totalDuration = slides.reduce((a, s) => a + s.effective_duration_ms, 0);
   const dirty = selected ? isDraftDirty(draft ?? draftFromSlide(selected), selected) : false;
 
@@ -767,6 +780,17 @@ export default function ProjectPage() {
                 <CircularProgress size={22} />
               )}
             </Stack>
+            {busyTtsCount > 0 && (
+              <JobProgress
+                active
+                mode="working"
+                progress={voiceProgress}
+                title={`Generating voices, ${readyCount} of ${slides.length} ready`}
+                detail={`${busyTtsCount} still working.`}
+                startedAt={ttsWatch.current?.at}
+                unknownTimeNote="Time left appears after the first new voice finishes."
+              />
+            )}
           </Stack>
         </CardContent>
       </Card>

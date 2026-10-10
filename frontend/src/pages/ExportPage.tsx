@@ -41,7 +41,9 @@ import VideoLibraryIcon from "@mui/icons-material/VideoLibrary";
 import Filter1Icon from "@mui/icons-material/Filter1";
 import { api, errMessage, mediaUrl } from "../api/client";
 import PageHeader from "../components/PageHeader";
+import JobProgress from "../components/JobProgress";
 import WanT2vBanner from "../components/WanT2vBanner";
+import { RENDER_PHASES, describeRender } from "../components/renderProgress";
 import type { Project } from "../types/project";
 import { getAspectOption } from "../types/aspectRatio";
 import { brandColors } from "../theme";
@@ -63,6 +65,9 @@ type Job = {
   slide_order?: number | null;
   error_code: string | null;
   error_message: string | null;
+  created_at?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
 };
 
 type QualityId = "draft" | "full";
@@ -304,6 +309,7 @@ export default function ExportPage() {
 
   const job = jobQuery.data;
   const jobRunning = job?.status === "queued" || job?.status === "processing";
+  const jobCopy = job ? describeRender(job.stage, job.status) : null;
   const previewMaxWidth =
     aspect.id === "9:16" || aspect.id === "4:5" ? 320 : aspect.id === "1:1" ? 420 : 720;
 
@@ -880,23 +886,38 @@ export default function ExportPage() {
             <Typography variant="h6" gutterBottom>
               Current job
             </Typography>
-            <Typography variant="body2" gutterBottom>
-              Status: <strong>{job.status}</strong>
-              {job.stage ? ` · stage: ${job.stage}` : ""}
-              {job.quality ? ` · ${job.quality}` : ""}
-              {job.caption_style ? ` · captions: ${job.caption_style}` : ""}
-              {` · ${jobScopeLabel(job)}`}
-              {job.aspect_ratio
-                ? ` · ${job.aspect_ratio}${job.width && job.height ? ` (${job.width}×${job.height})` : ""}`
-                : ""}
-            </Typography>
-            {jobRunning && (
-              <Box sx={{ my: 2 }}>
-                <LinearProgress
-                  variant={job.progress > 0 ? "determinate" : "indeterminate"}
-                  value={job.progress}
+            <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap" sx={{ mb: 1.5 }}>
+              <Chip size="small" label={job.status} color={jobRunning ? "primary" : "default"} />
+              {job.quality && <Chip size="small" variant="outlined" label={job.quality} />}
+              {job.caption_style && <Chip size="small" variant="outlined" label={`captions: ${job.caption_style}`} />}
+              <Chip size="small" variant="outlined" label={jobScopeLabel(job)} />
+              {job.aspect_ratio && (
+                <Chip
+                  size="small"
+                  variant="outlined"
+                  label={
+                    job.width && job.height
+                      ? `${job.aspect_ratio} · ${job.width}×${job.height}`
+                      : job.aspect_ratio
+                  }
                 />
-                <Typography variant="caption">{job.progress}%</Typography>
+              )}
+            </Stack>
+            {(jobRunning || job.status === "completed" || job.status === "failed") && (
+              <Box sx={{ mb: 2 }}>
+                <JobProgress
+                  active={jobRunning}
+                  mode={job.status === "queued" ? "waiting" : jobRunning ? "working" : "done"}
+                  progress={job.progress}
+                  title={jobCopy?.title || "Rendering"}
+                  detail={jobCopy?.detail}
+                  startedAt={job.started_at}
+                  createdAt={job.created_at}
+                  finishedAt={job.finished_at}
+                  phases={RENDER_PHASES}
+                  activePhase={jobCopy?.phase}
+                  unknownTimeNote="Time left appears once the percent passes 8%. Loading Wan can sit still before the first step."
+                />
               </Box>
             )}
             {job.status === "cancelled" && <Alert severity="warning">Render was stopped.</Alert>}
@@ -972,7 +993,7 @@ export default function ExportPage() {
                 onClick={() => setJobId(j.id)}
               >
                 <Typography variant="body2">
-                  {j.id.slice(0, 8)}… · {j.status} · {j.progress}%
+                  {describeRender(j.stage, j.status).title} · {j.progress}% · {j.status}
                   {j.quality ? ` · ${j.quality}` : ""}
                   {` · ${jobScopeLabel(j)}`}
                   {j.caption_style ? ` · ${j.caption_style}` : ""}

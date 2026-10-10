@@ -568,20 +568,33 @@ def _generate_diffusers(
     if image_path is not None:
         image = load_image(str(image_path)).resize((width, height))
 
+    steps = int(settings.wan_t2v_num_inference_steps)
     progress(f"sampling {frames} frames @ {width}x{height}")
+
+    def on_step_end(_pipe, step_index, _timestep, callback_kwargs):
+        progress(f"step {int(step_index) + 1}/{steps}")
+        return callback_kwargs
+
     call = dict(
         prompt=prompt,
         negative_prompt=negative_prompt,
         height=height,
         width=width,
         num_frames=frames,
-        num_inference_steps=int(settings.wan_t2v_num_inference_steps),
+        num_inference_steps=steps,
         guidance_scale=float(settings.wan_t2v_guidance_scale),
         generator=generator,
+        callback_on_step_end=on_step_end,
     )
     if image is not None:
         call["image"] = image
-    result = pipe(**call)
+    try:
+        result = pipe(**call)
+    except TypeError as exc:
+        if "callback_on_step_end" not in str(exc):
+            raise
+        call.pop("callback_on_step_end", None)
+        result = pipe(**call)
     progress("exporting video")
     export_to_video(result.frames[0], str(output_path), fps=CLIP_FPS)
 

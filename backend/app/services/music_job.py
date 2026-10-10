@@ -11,8 +11,13 @@ from sqlalchemy.orm import Session
 from app.config import Settings, get_settings
 from app.db.models import MusicAsset, Project, StoryJob
 from app.db.session import SessionLocal
-from app.services.ace_step import AceStepMusicProvider, generate_music_bytes, mark_music_failed
-from app.services.stage_job import begin_stage_job
+from app.services.ace_step import (
+    AceStepMusicProvider,
+    ace_step_percent,
+    generate_music_bytes,
+    mark_music_failed,
+)
+from app.services.stage_job import begin_stage_job, report_progress
 from app.services.storage import get_storage
 
 logger = logging.getLogger(__name__)
@@ -54,7 +59,19 @@ def execute_music_job(
             session.commit()
             return
         active = build_music_provider(settings, provider)
-        audio = generate_music_bytes(active, dict(job.payload or {}), settings)
+        seen: dict[str, int | None] = {"percent": -1}
+
+        def on_tick(item: dict) -> None:
+            percent = ace_step_percent(item)
+            if percent == seen["percent"]:
+                return
+            seen["percent"] = percent
+            if percent is None:
+                report_progress(session, job, 0, "ACE-Step is writing the track")
+            else:
+                report_progress(session, job, min(percent, 99), f"ACE-Step is {percent}% through the track")
+
+        audio = generate_music_bytes(active, dict(job.payload or {}), settings, on_tick=on_tick)
         if audio is None:
             payload = dict(job.payload or {})
             payload["skipped"] = True
@@ -62,6 +79,8 @@ def execute_music_job(
         else:
             _store_track(session, project, audio)
         job.status = "succeeded"
+        job.progress = 100
+        job.detail = "Music is ready" if audio is not None else "Music is off for this project"
         job.error = None
         session.commit()
         logger.info("[MUSIC] %s completed", project.id)

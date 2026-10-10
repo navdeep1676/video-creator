@@ -13,6 +13,7 @@ from app.services.subtitles import (
     estimate_phrase_cues,
     load_cues,
 )
+from app.services.render_progress import wan_clip_update
 from app.utils.media import ffmpeg_supports_subtitles, ffprobe_duration_ms, run_ffmpeg
 
 
@@ -128,7 +129,7 @@ def _render_wan_t2v_segment(
     """Wan2.2 TI2V 5B clip, then scale it onto the delivery frame."""
     from app.services.wan_t2v import generate_t2v
 
-    progress(10 + int(30 * index / max(n_slides, 1)), "wan_ti2v")
+    progress(*wan_clip_update(index, n_slides, "starting"))
     raw = seg.with_name(f"{seg.stem}_wan_ti2v.mp4")
     prompt = (slide.motion_prompt or "").strip() or (slide.text or "").strip()
     still = slide.image_path if slide.image_path.is_file() else None
@@ -140,10 +141,7 @@ def _render_wan_t2v_segment(
         frame_width=options.width,
         frame_height=options.height,
         image_path=still,
-        progress_cb=lambda message: progress(
-            10 + int(30 * (index + 1) / max(n_slides, 1)),
-            f"wan_ti2v:{message[:80]}",
-        ),
+        progress_cb=lambda message: progress(*wan_clip_update(index, n_slides, message)),
     )
     fi, fo = 0.0, 0.0
     if slide.transition == "fade":
@@ -246,13 +244,14 @@ def render_project_video(
             progress_cb(p, stage)
 
     # Step A: segments
-    progress(10, "segments")
     segment_paths: list[Path] = []
     n_slides = len(timeline)
+    progress(10, f"scene 1/{n_slides}")
     for i, entry in enumerate(timeline):
         slide: SlideMedia = entry["slide"]
         d = entry["duration_s"]
         seg = work_dir / f"segment_{i:04d}.mp4"
+        progress(10 + int(30 * i / n_slides), f"scene {i + 1}/{n_slides}")
         if slide.animation == "wan_t2v":
             _render_wan_t2v_segment(
                 slide,
@@ -264,7 +263,7 @@ def render_project_video(
                 lambda p, stage: progress(p, stage),
             )
             segment_paths.append(seg)
-            progress(10 + int(30 * (i + 1) / n_slides), "segments")
+            progress(10 + int(30 * (i + 1) / n_slides), f"scene {i + 1}/{n_slides}")
             continue
         image_paths = slide.resolved_image_paths()
         if not image_paths:
@@ -314,10 +313,7 @@ def render_project_video(
                 # Wan2.2 TI2V 5B animates this still, then the clip is fit to the canvas.
                 from app.services.wan_t2v import generate_t2v
 
-                progress(
-                    10 + int(30 * (i + j / max(n_imgs, 1)) / n_slides),
-                    "wan_ti2v",
-                )
+                progress(*wan_clip_update(i, n_slides, "starting"))
                 raw_i2v = work_dir / f"segment_{i:04d}_img_{j:02d}_wan.mp4"
                 prompt = (slide.motion_prompt or "").strip() or (slide.text or "").strip()
                 generate_t2v(
@@ -328,9 +324,7 @@ def render_project_video(
                     frame_width=options.width,
                     frame_height=options.height,
                     image_path=img_path,
-                    progress_cb=lambda m: progress(
-                        10 + int(30 * (i + 1) / n_slides), f"wan_ti2v:{m[:40]}"
-                    ),
+                    progress_cb=lambda m, i=i, n_slides=n_slides: progress(*wan_clip_update(i, n_slides, m)),
                 )
                 vf_parts = [base_scale, f"fps={options.fps}"]
                 if fade_parts:
@@ -419,7 +413,7 @@ def render_project_video(
                 )
 
         segment_paths.append(seg)
-        progress(10 + int(30 * (i + 1) / n_slides), "segments")
+        progress(10 + int(30 * (i + 1) / n_slides), f"scene {i + 1}/{n_slides}")
 
     # Step B: concat video
     progress(45, "concat_video")

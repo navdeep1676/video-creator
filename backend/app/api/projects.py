@@ -31,7 +31,7 @@ from app.services.gemini_llm import gemini_catalog_rows
 from app.services.local_llm import configured_local_model, local_catalog_rows
 from app.services.openai_llm import openai_catalog_rows
 from app.services.openrouter_catalog import load_catalog
-from app.services.stage_job import dispatch_stage_task
+from app.services.stage_job import dispatch_stage_task, job_view
 from app.services.story_job import latest_story_job, save_story
 from app.services.story_planner import PlanError, StoryPlan, import_plan
 from app.services.story_slides import replace_project_slides
@@ -308,14 +308,7 @@ def _check_scene_count(value: str) -> str:
 
 
 def _job_out(job: StoryJob) -> dict:
-    return {
-        "id": str(job.id),
-        "project_id": str(job.project_id),
-        "stage": job.stage,
-        "status": job.status,
-        "attempts": job.attempts,
-        "error": job.error,
-    }
+    return job_view(job)
 
 
 def _character_out(row: StoryCharacter) -> dict:

@@ -15,7 +15,7 @@ from app.db.models import Story, StoryJob, User
 from app.db.session import get_db
 from app.dependencies import get_current_user
 from app.services.music_job import latest_job
-from app.services.stage_job import dispatch_stage_task
+from app.services.stage_job import dispatch_stage_task, job_view
 from app.utils.exceptions import AppError
 from app.workers.tasks import generate_project_images
 
@@ -27,14 +27,7 @@ class ImageGenerateRequest(BaseModel):
 
 
 def _job_out(job: StoryJob) -> dict:
-    return {
-        "id": str(job.id),
-        "project_id": str(job.project_id),
-        "stage": job.stage,
-        "status": job.status,
-        "attempts": job.attempts,
-        "error": job.error,
-    }
+    return job_view(job)
 
 
 @router.get("/projects/{project_id}/images/job")

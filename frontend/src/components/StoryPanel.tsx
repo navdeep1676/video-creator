@@ -16,6 +16,7 @@ import {
 import AutoStoriesIcon from "@mui/icons-material/AutoStories";
 import CloudUploadIcon from "@mui/icons-material/CloudUpload";
 import { api, errMessage, mediaUrl } from "../api/client";
+import JobProgress from "./JobProgress";
 import StoryReview, {
   type StoryCharacterView,
   type StoryLocationView,
@@ -24,6 +25,16 @@ import StoryReview, {
 } from "./StoryReview";
 
 type FreeModel = { id: string; name: string; provider?: string };
+
+type StageJob = {
+  id: string;
+  status: string;
+  error: string | null;
+  progress?: number;
+  detail?: string | null;
+  started_at?: string | null;
+  created_at?: string | null;
+};
 
 type StoryPayload = {
   settings: {
@@ -36,14 +47,14 @@ type StoryPayload = {
     scene_count?: string;
     llm_model?: string;
   } | null;
-  job: { id: string; status: string; error: string | null } | null;
+  job: StageJob | null;
   music?: {
-    job: { id: string; status: string; error: string | null } | null;
+    job: StageJob | null;
     audio_url: string | null;
     filename: string | null;
   };
   images?: {
-    job: { id: string; status: string; error: string | null } | null;
+    job: StageJob | null;
   };
   story: StoryView | null;
   characters: StoryCharacterView[];
@@ -52,6 +63,33 @@ type StoryPayload = {
 };
 
 const DURATIONS = [30, 60, 140, 180, 300];
+
+function StageProgress({
+  job,
+  title,
+  detail,
+  unknownTimeNote,
+}: {
+  job: StageJob | null | undefined;
+  title: string;
+  detail: string;
+  unknownTimeNote: string;
+}) {
+  if (!job || (job.status !== "queued" && job.status !== "running")) return null;
+  const waiting = job.status === "queued";
+  return (
+    <JobProgress
+      active
+      mode={waiting ? "waiting" : "working"}
+      progress={job.progress || 0}
+      title={job.detail || title}
+      detail={detail}
+      startedAt={job.started_at}
+      createdAt={job.created_at}
+      unknownTimeNote={unknownTimeNote}
+    />
+  );
+}
 
 function readStoryFile(file: File): Promise<Record<string, unknown>> {
   return file.text().then((text) => {
@@ -513,6 +551,12 @@ export default function StoryPanel({ projectId, defaultTopic }: { projectId: str
               Celery worker. That worker must listen to story-generation, music-generation, and image-generation. Wan
               stays on the render worker.
             </Typography>
+            <StageProgress
+              job={job}
+              title="Writing the story"
+              detail="The model writes the whole plan in one pass."
+              unknownTimeNote="The percent stays at 0 until the model returns the story. Time left shows while the scenes are saved."
+            />
             {story && musicMode !== "none" && (
               <Stack spacing={1} alignItems="flex-start">
                 <Button variant="outlined" disabled={planning || musicBusy} onClick={() => generateMusic.mutate()}>
@@ -522,6 +566,12 @@ export default function StoryPanel({ projectId, defaultTopic }: { projectId: str
                   ACE-Step writes one full track for the whole video, following every scene. Horror background stays
                   instrumental. Kids stories and Full song sing the original lyrics from start to finish.
                 </Typography>
+                <StageProgress
+                  job={musicJob}
+                  title="Writing the music"
+                  detail="ACE-Step writes one track for the whole video."
+                  unknownTimeNote="Time left appears if ACE-Step reports a percent. Until then this shows how long it has been writing."
+                />
                 {musicJob?.status === "failed" && musicJob.error && <Alert severity="error">{musicJob.error}</Alert>}
                 {audioSrc && <audio controls src={audioSrc} />}
               </Stack>
@@ -544,6 +594,12 @@ export default function StoryPanel({ projectId, defaultTopic }: { projectId: str
                   ComfyUI on port 8188 draws each scene with Qwen-Image-2.1. Slides that already have a picture are
                   kept until you regenerate. The image-generation queue must be on the non-render Celery worker.
                 </Typography>
+                <StageProgress
+                  job={imageJob}
+                  title="Drawing scene images"
+                  detail="ComfyUI draws one scene at a time."
+                  unknownTimeNote="Time left appears after the first scene, or the first ComfyUI step, moves the percent."
+                />
                 {imageJob?.status === "failed" && imageJob.error && <Alert severity="error">{imageJob.error}</Alert>}
               </Stack>
             )}
