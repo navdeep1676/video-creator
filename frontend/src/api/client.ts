@@ -2,6 +2,8 @@ import axios from "axios";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "/api/v1";
 
+export { API_BASE };
+
 let accessToken: string | null = null;
 
 export function setAccessToken(token: string | null) {

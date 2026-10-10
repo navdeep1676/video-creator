@@ -58,6 +58,12 @@ def begin_stage_job(session: Session, job_id, task_id: str | None) -> StoryJob |
 
 def report_progress(session: Session, job: StoryJob, progress: int, detail: str) -> None:
     """Save a percent and a short line so the UI can poll them."""
+    try:
+        session.refresh(job)
+    except Exception:
+        pass
+    if job.status == "cancelled":
+        return
     job.progress = max(0, min(100, int(progress)))
     job.detail = (detail or "")[:500] or None
     if job.started_at is None:

@@ -35,6 +35,8 @@ class MusicGenerationError(RuntimeError):
 
 
 def mark_music_failed(job: Any, exc: BaseException) -> None:
+    if getattr(job, "status", None) == "cancelled":
+        return
     job.status = "failed"
     job.error = str(exc)
 

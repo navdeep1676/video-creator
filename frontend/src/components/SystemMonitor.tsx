@@ -1,7 +1,9 @@
-import { Box, Chip, LinearProgress, Paper, Skeleton, Stack, Typography } from "@mui/material";
-import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
+import { Box, Button, Chip, LinearProgress, Paper, Skeleton, Stack, Typography } from "@mui/material";
+import StopIcon from "@mui/icons-material/Stop";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link as RouterLink } from "react-router-dom";
-import { api } from "../api/client";
+import { api, errMessage } from "../api/client";
 import { brandColors } from "../theme";
 
 type Meter = {
@@ -40,6 +42,7 @@ type GpuProcess = {
   utilization: number;
   vram_used: number;
   on_gpu: boolean;
+  stop_id?: string | null;
 };
 
 type Snapshot = {
@@ -59,6 +62,7 @@ type Row = {
   progress: number | null;
   indeterminate: boolean;
   href?: string;
+  stopId?: string | null;
 };
 
 function formatBytes(value: number | null | undefined): string | null {
@@ -92,6 +96,7 @@ function jobRow(job: Job): Row {
     progress: job.progress,
     indeterminate: job.status === "running" && job.progress <= 0,
     href: job.href,
+    stopId: job.id,
   };
 }
 
@@ -106,6 +111,7 @@ function processRow(process: GpuProcess): Row {
     detail: vram ? `${vram} VRAM` : null,
     progress: busy ? process.utilization : null,
     indeterminate: false,
+    stopId: process.stop_id,
   };
 }
 
@@ -149,7 +155,15 @@ function MeterBlock({
   );
 }
 
-function WorkRow({ row }: { row: Row }) {
+function WorkRow({
+  row,
+  stopping,
+  onStop,
+}: {
+  row: Row;
+  stopping: boolean;
+  onStop: (id: string) => void;
+}) {
   const title = (
     <Typography variant="body2" fontWeight={700} noWrap>
       {row.title}
@@ -176,6 +190,19 @@ function WorkRow({ row }: { row: Row }) {
         <Typography variant="body2" fontWeight={800} sx={{ flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>
           {row.indeterminate ? "…" : row.progress == null ? "" : percentText(row.progress)}
         </Typography>
+        {row.stopId && (
+          <Button
+            size="small"
+            color="error"
+            variant="outlined"
+            startIcon={<StopIcon />}
+            disabled={stopping}
+            onClick={() => onStop(row.stopId as string)}
+            sx={{ flexShrink: 0, minWidth: 0, px: 1 }}
+          >
+            {stopping ? "Stopping" : "Stop"}
+          </Button>
+        )}
       </Stack>
       {row.progress != null && (
         <LinearProgress
@@ -213,6 +240,23 @@ export default function SystemMonitor() {
   const offGpu: Row[] = data?.jobs.filter((job) => !job.on_gpu).map(jobRow) ?? [];
   const showWork = query.isSuccess;
   const anyWork = onGpu.length + offGpu.length > 0;
+  const [note, setNote] = useState<string | null>(null);
+  const [stoppingId, setStoppingId] = useState<string | null>(null);
+  const stop = useMutation({
+    mutationFn: async (id: string) => (await api.post<{ message: string }>("/system/stop", { id })).data,
+    onSuccess: async (data) => {
+      setNote(data.message);
+      await query.refetch();
+    },
+    onError: (error) => setNote(errMessage(error)),
+    onSettled: () => setStoppingId(null),
+  });
+
+  function requestStop(id: string) {
+    setNote(null);
+    setStoppingId(id);
+    stop.mutate(id);
+  }
 
   return (
     <Paper
@@ -245,6 +289,11 @@ export default function SystemMonitor() {
             <MeterBlock label="CPU" value={percentText(data?.cpu.percent)} caption="Processor" color={brandColors.cyan} />
             <MeterBlock label="RAM" value={percentText(data?.ram.percent)} caption={ramCaption} color={brandColors.indigo} />
           </Stack>
+          {note && (
+            <Typography variant="caption" color="text.secondary">
+              {note}
+            </Typography>
+          )}
           {showWork && !anyWork && (
             <Typography variant="caption" color="text.secondary">
               Nothing running
@@ -252,8 +301,8 @@ export default function SystemMonitor() {
           )}
           {showWork && anyWork && (
             <Stack spacing={1}>
-              <WorkGroup title="On GPU" rows={onGpu} empty="Nothing on the GPU" />
-              <WorkGroup title="Not on GPU" rows={offGpu} empty="Nothing running off the GPU" />
+              <WorkGroup title="On GPU" rows={onGpu} empty="Nothing on the GPU" stoppingId={stoppingId} onStop={requestStop} />
+              <WorkGroup title="Not on GPU" rows={offGpu} empty="Nothing running off the GPU" stoppingId={stoppingId} onStop={requestStop} />
             </Stack>
           )}
         </Stack>
@@ -262,7 +311,19 @@ export default function SystemMonitor() {
   );
 }
 
-function WorkGroup({ title, rows, empty }: { title: string; rows: Row[]; empty: string }) {
+function WorkGroup({
+  title,
+  rows,
+  empty,
+  stoppingId,
+  onStop,
+}: {
+  title: string;
+  rows: Row[];
+  empty: string;
+  stoppingId: string | null;
+  onStop: (id: string) => void;
+}) {
   return (
     <Box>
       <Typography
@@ -278,7 +339,7 @@ function WorkGroup({ title, rows, empty }: { title: string; rows: Row[]; empty: 
       ) : (
         <Stack spacing={1} sx={{ mt: 0.5, maxHeight: 168, overflow: "auto", pr: 0.5 }}>
           {rows.map((row) => (
-            <WorkRow key={row.id} row={row} />
+            <WorkRow key={row.id} row={row} stopping={Boolean(row.stopId) && stoppingId === row.stopId} onStop={onStop} />
           ))}
         </Stack>
       )}

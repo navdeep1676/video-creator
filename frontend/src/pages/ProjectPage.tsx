@@ -38,6 +38,7 @@ import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import OpenInNewIcon from "@mui/icons-material/OpenInNew";
 import { api, errMessage, mediaUrl } from "../api/client";
+import { useProjectSync } from "../api/projectSync";
 import JobProgress from "../components/JobProgress";
 import SlideList from "../components/SlideList";
 import PageHeader from "../components/PageHeader";
@@ -205,15 +206,11 @@ export default function ProjectPage() {
     onError: (e) => setError(errMessage(e)),
   });
 
+  useProjectSync(projectId);
+
   const slidesQuery = useQuery({
     queryKey: ["slides", projectId],
     queryFn: async () => (await api.get(`/projects/${projectId}/slides`)).data as Slide[],
-    refetchInterval: (query) => {
-      const data = query.state.data as Slide[] | undefined;
-      if (!data) return false;
-      const busy = data.some((s) => ["queued", "processing"].includes(s.narration?.tts_status || ""));
-      return busy ? 2000 : false;
-    },
   });
 
   const languagesQuery = useQuery({

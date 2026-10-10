@@ -74,6 +74,9 @@ def execute_story_job(
         plan = plan_story(SimpleNamespace(**job.payload), active, settings)
         report_progress(session, job, 90, "Saving the story and scenes")
         save_story(session, project, plan)
+        session.refresh(job)
+        if job.status == "cancelled":
+            return
         job.status = "succeeded"
         job.progress = 100
         job.detail = "Story is ready"
@@ -84,7 +87,7 @@ def execute_story_job(
         session.rollback()
         logger.exception("[STORY] %s failed", job_id)
         failed = session.get(StoryJob, job_id)
-        if failed is not None:
+        if failed is not None and failed.status != "cancelled":
             failed.status = "failed"
             failed.error = str(exc)
             session.commit()

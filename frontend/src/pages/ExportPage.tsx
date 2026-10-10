@@ -40,6 +40,7 @@ import ChecklistRtlIcon from "@mui/icons-material/ChecklistRtl";
 import VideoLibraryIcon from "@mui/icons-material/VideoLibrary";
 import Filter1Icon from "@mui/icons-material/Filter1";
 import { api, errMessage, mediaUrl } from "../api/client";
+import { useProjectSync } from "../api/projectSync";
 import PageHeader from "../components/PageHeader";
 import JobProgress from "../components/JobProgress";
 import WanT2vBanner from "../components/WanT2vBanner";
@@ -170,14 +171,12 @@ export default function ExportPage() {
   const [expandedCheck, setExpandedCheck] = useState<string | null>(null);
   const [captionDefaulted, setCaptionDefaulted] = useState(false);
 
+  useProjectSync(projectId);
+
   const jobQuery = useQuery({
     queryKey: ["job", jobId],
     enabled: !!jobId,
     queryFn: async () => (await api.get(`/video/status/${jobId}`)).data as Job,
-    refetchInterval: (q) => {
-      const st = q.state.data?.status;
-      return st === "queued" || st === "processing" ? 1500 : false;
-    },
   });
 
   const historyQuery = useQuery({
@@ -216,12 +215,6 @@ export default function ExportPage() {
           params: renderSlideId ? { slide_id: renderSlideId } : {},
         })
       ).data as ExportReadiness,
-    refetchInterval: (q) => {
-      const data = q.state.data;
-      if (!data) return 4000;
-      if (data.summary.tts_in_progress > 0) return 2500;
-      return false;
-    },
   });
 
   const captionStylesQuery = useQuery({

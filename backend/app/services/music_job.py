@@ -89,6 +89,9 @@ def execute_music_job(
             job.payload = payload
         else:
             _store_track(session, project, audio)
+        session.refresh(job)
+        if job.status == "cancelled":
+            return
         job.status = "succeeded"
         job.progress = 100
         job.detail = "Music is ready" if audio is not None else "Music is off for this project"
@@ -99,7 +102,7 @@ def execute_music_job(
         session.rollback()
         logger.exception("[MUSIC] %s failed", job_id)
         failed = session.get(StoryJob, job_id)
-        if failed is not None:
+        if failed is not None and failed.status != "cancelled":
             mark_music_failed(failed, exc)
             session.commit()
     finally:

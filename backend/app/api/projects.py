@@ -4,7 +4,10 @@ from uuid import UUID
 
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Query
+import asyncio
+
+from fastapi import APIRouter, Depends, Query, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -34,6 +37,7 @@ from app.services.openrouter_catalog import load_catalog
 from app.services.stage_job import dispatch_stage_task, job_view
 from app.services.story_job import latest_story_job, save_story
 from app.services.story_planner import PlanError, StoryPlan, import_plan
+from app.services.live_sync import encode_sync_event, read_project_sync, sync_delta
 from app.services.story_slides import replace_project_slides
 from app.schemas.common import ListResponse, ProjectCreate, ProjectOut, ProjectUpdate
 from app.services.aspect_ratios import project_aspect_ratio, resolve_aspect_ratio
@@ -396,6 +400,50 @@ def _plan_document(
         "sfx_notes": "",
         "scenes": scenes,
     }
+
+
+@router.get("/{project_id}/events")
+async def project_events(
+    project_id: UUID,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> StreamingResponse:
+    """Push job, slide, and render changes. The page keeps this one connection open."""
+    project = get_owned_project(db, project_id, user)
+    user_id = user.id
+    owned_id = project.id
+
+    async def frames():
+        previous: dict | None = None
+        quiet = 0
+        while True:
+            if await request.is_disconnected():
+                break
+            current = await asyncio.to_thread(read_project_sync, owned_id, user_id)
+            if current is None:
+                break
+            delta = sync_delta(previous, current)
+            if delta is not None:
+                previous = current
+                quiet = 0
+                yield encode_sync_event(delta)
+            else:
+                quiet += 1
+                if quiet >= 15:
+                    quiet = 0
+                    yield ": ping\n\n"
+            await asyncio.sleep(1)
+
+    return StreamingResponse(
+        frames(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.get("/{project_id}/story")

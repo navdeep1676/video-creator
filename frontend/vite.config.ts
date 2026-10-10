@@ -27,6 +27,8 @@ export default defineConfig({
       "/api": {
         target: apiProxy,
         changeOrigin: true,
+        timeout: 0,
+        proxyTimeout: 0,
       },
       "/health": {
         target: apiProxy,

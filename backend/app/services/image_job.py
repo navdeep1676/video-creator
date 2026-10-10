@@ -67,6 +67,13 @@ def execute_image_job(
             report_progress(session, job, 0, "Starting ComfyUI")
             ensure_comfyui_server(settings)
 
+        def stopped() -> bool:
+            try:
+                session.refresh(job)
+            except Exception:
+                return False
+            return job.status == "cancelled"
+
         errors = _draw_project(
             session,
             project,
@@ -75,8 +82,12 @@ def execute_image_job(
             force,
             on_progress=on_progress,
             on_start=on_start if manage_gpu else None,
+            stopped=stopped,
         )
         active.unload()
+        session.refresh(job)
+        if job.status == "cancelled":
+            return
         if errors:
             _fail(job, "; ".join(errors))
         else:
@@ -90,7 +101,7 @@ def execute_image_job(
         session.rollback()
         logger.exception("[IMAGE] %s failed", job_id)
         failed = session.get(StoryJob, job_id)
-        if failed is not None:
+        if failed is not None and failed.status != "cancelled":
             _fail(failed, str(exc))
             session.commit()
         if active is not None:
@@ -114,6 +125,7 @@ def _draw_project(
     force: bool,
     on_progress: Callable[[int, str], None] | None = None,
     on_start: Callable[[], None] | None = None,
+    stopped: Callable[[], bool] | None = None,
 ) -> list[str]:
     slides = list(
         session.scalars(
@@ -177,6 +189,8 @@ def _draw_project(
             if kept:
                 previous = kept
             continue
+        if stopped is not None and stopped():
+            return errors
         index = pending_at
         pending_at += 1
         prompt = pending[index][1]
@@ -292,5 +306,7 @@ def _seed(slide_id: uuid.UUID, prompt: str) -> int:
 
 
 def _fail(job: StoryJob, message: str) -> None:
+    if job.status == "cancelled":
+        return
     job.status = "failed"
     job.error = message[:2000]

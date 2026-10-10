@@ -403,3 +403,41 @@ def test_comfyui_starts_before_the_node_check(monkeypatch, tmp_path):
     )
     assert errors == []
     assert order == ["start", "nodes", "draw"]
+
+
+def test_stop_skips_the_remaining_scenes(monkeypatch, tmp_path):
+    storage = LocalStorage(tmp_path)
+    monkeypatch.setattr("app.services.image_job.get_storage", lambda: storage)
+    project_id = uuid.uuid4()
+    project = Project(
+        id=project_id,
+        owner_id=uuid.uuid4(),
+        title="hallway",
+        settings={"aspect_ratio": "16:9"},
+        storage_bytes=0,
+    )
+    first = Slide(id=uuid.uuid4(), project_id=project_id, order_index=0, duration_ms=5000, image_keys=[])
+    second = Slide(id=uuid.uuid4(), project_id=project_id, order_index=1, duration_ms=5000, image_keys=[])
+    scenes = [
+        StoryScene(project_id=project_id, index=0, image_prompt="a quiet hallway"),
+        StoryScene(project_id=project_id, index=1, image_prompt="the door opens"),
+    ]
+    calls: list[str] = []
+
+    class _Provider:
+        def generate(self, graph):
+            calls.append(graph["4"]["inputs"]["prompt"])
+            return _png()
+
+    errors = _draw_project(
+        _Session([first, second], scenes),
+        project,
+        _settings(),
+        _Provider(),
+        False,
+        stopped=lambda: len(calls) >= 1,
+    )
+    assert errors == []
+    assert len(calls) == 1
+    assert first.image_key
+    assert second.image_key is None

@@ -286,10 +286,17 @@ def system_snapshot(session: Session, user_id: UUID, settings: Settings) -> dict
     except Exception:
         logger.exception("Running job list failed")
         jobs = []
+    from app.services.stop_work import process_stop_id
+
+    processes = []
+    for row in host["processes"]:
+        item = dict(row)
+        item["stop_id"] = process_stop_id(str(item.get("name") or ""))
+        processes.append(item)
     return {
         "cpu": host["cpu"],
         "ram": host["ram"],
         "gpu": gpu,
         "jobs": jobs,
-        "processes": host["processes"],
+        "processes": processes,
     }

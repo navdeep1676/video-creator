@@ -163,13 +163,6 @@ export default function StoryPanel({ projectId, defaultTopic }: { projectId: str
   const storyQuery = useQuery({
     queryKey: ["story", projectId],
     queryFn: async () => (await api.get(`/projects/${projectId}/story`)).data as StoryPayload,
-    refetchInterval: (query) => {
-      const storyStatus = query.state.data?.job?.status;
-      const musicStatus = query.state.data?.music?.job?.status;
-      const imageStatus = query.state.data?.images?.job?.status;
-      const active = (status?: string) => status === "queued" || status === "running";
-      return active(storyStatus) || active(musicStatus) || active(imageStatus) ? 2000 : false;
-    },
   });
 
   useEffect(() => {
@@ -366,31 +359,6 @@ export default function StoryPanel({ projectId, defaultTopic }: { projectId: str
     !modelsQuery.data.key_configured;
   const audioSrc = mediaUrl(storyQuery.data?.music?.audio_url);
   const videoCount = scenes.filter((scene) => scene.generation_mode === "video").length;
-  const jobStatus = job?.status ?? null;
-  const previousJobStatus = useRef<string | null>(null);
-  const imageJobStatus = imageJob?.status ?? null;
-  const previousImageStatus = useRef<string | null>(null);
-
-  useEffect(() => {
-    if (previousJobStatus.current && previousJobStatus.current !== "succeeded" && jobStatus === "succeeded") {
-      void qc.invalidateQueries({ queryKey: ["slides", projectId] });
-    }
-    previousJobStatus.current = jobStatus;
-  }, [jobStatus, projectId, qc]);
-
-  useEffect(() => {
-    const previous = previousImageStatus.current;
-    const finished = imageJobStatus === "succeeded" || imageJobStatus === "failed";
-    if (previous && previous !== imageJobStatus && finished) {
-      void qc.invalidateQueries({ queryKey: ["slides", projectId] });
-    }
-    previousImageStatus.current = imageJobStatus;
-  }, [imageJobStatus, projectId, qc]);
-
-  useEffect(() => {
-    if (imageJobStatus !== "queued" && imageJobStatus !== "running") return;
-    void qc.invalidateQueries({ queryKey: ["slides", projectId] });
-  }, [imageJobStatus, imageJob?.progress, imageJob?.detail, storyQuery.dataUpdatedAt, projectId, qc]);
 
   useEffect(() => {
     if (planning || !story || scenes.length === 0 || !slidesQuery.isSuccess || slidesMatch) return;
